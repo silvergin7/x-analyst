@@ -1,0 +1,20 @@
+{
+  "name": "x-analyst",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local macro-analyst outlook prototype (mocked CLI)",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

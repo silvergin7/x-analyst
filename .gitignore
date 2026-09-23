@@ -1,0 +1,25 @@
+# Cursor local rules and settings (not for version control)
+.cursor/
+
+# Temporary external review artifact (never commit)
+REVIEW_FOR_AUDIT.md
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Logs and OS
+*.log
+.DS_Store
+Thumbs.db
