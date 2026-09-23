@@ -3,10 +3,13 @@ import type { FetchLimits } from "./types.js";
 const DEFAULT_MAX_POSTS_PER_PERSON = 10;
 const DEFAULT_MAX_POSTS_TOTAL = 25;
 
+/** Positive whole integers only; malformed env values use the fallback default. */
 function parsePositiveInt(value: string | undefined, fallback: number): number {
-  if (value === undefined || value.trim() === "") return fallback;
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n) || n < 1) return fallback;
+  if (value === undefined) return fallback;
+  const trimmed = value.trim();
+  if (trimmed === "" || !/^\d+$/.test(trimmed)) return fallback;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 1 || !Number.isSafeInteger(n)) return fallback;
   return n;
 }
 
