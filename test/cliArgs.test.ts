@@ -56,4 +56,14 @@ describe("parseCliArgs", () => {
     assert.ok(opts.flagErrors.some((e) => e.includes("Empty value for --question")));
     assert.equal(opts.question, "");
   });
+
+  it("parses --handles=value and --question=value forms", () => {
+    const opts = parseCliArgs([
+      "--handles=bullmacro,bearmacro",
+      "--question=What now?",
+    ]);
+    assert.deepEqual(opts.handles, ["bullmacro", "bearmacro"]);
+    assert.equal(opts.question, "What now?");
+    assert.equal(opts.flagErrors.length, 0);
+  });
 });
