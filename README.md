@@ -58,6 +58,18 @@ Fixture post URLs use the fictional domain `fixture.x-analyst.local` — **not**
 - No database, web UI, auth, or deployment.
 - Mock analysis is **not** LLM inference; do not treat output as verified market research.
 
+## Post provider (mock default)
+
+The CLI **always** uses `MockPostsFetcher` (local fixtures). No network requests are made on this branch.
+
+Optional future Desearch settings are documented in `.env.example` only:
+
+- `POSTS_PROVIDER=mock` (default)
+- `DESEARCH_API_KEY` — placeholder until you obtain credentials
+- `DESEARCH_LIVE_ENABLED=false` — must be `true` with a real key before any live Desearch path is allowed
+
+`DesearchPostsFetcher` exists for tests and future wiring with an **injected transport only**. This branch includes **no production HTTP transport** and makes **no live API requests**. Assumed response shapes are placeholders until official Desearch documentation and credentials are available. Before live use: obtain Desearch credentials, confirm the API contract, implement a real transport behind the interface, and approve one capped test request.
+
 ## Secrets
 
-When live APIs are added, use a `.env` file (see `.env.example` in a later step). Never commit `.env` or real API responses.
+Copy `.env.example` to `.env` locally when ready for live services. Never commit `.env`, real API keys, or sensitive API responses.
