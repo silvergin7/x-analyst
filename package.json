@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/cli.ts",
-    "test": "node --import tsx --test test/*.test.ts test/**/*.test.ts",
+    "test": "node --import tsx --test test/*.test.ts test/desearch/*.test.ts test/format/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
