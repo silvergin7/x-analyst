@@ -4,7 +4,7 @@ import {
   createCliPostsFetcher,
   createPostsFetcherFromEnv,
 } from "../src/fetch/createPostsFetcher.js";
-import { DesearchNotConfiguredError } from "../src/fetch/desearch/desearchPostsFetcher.js";
+import { DesearchPostsFetcher } from "../src/fetch/desearch/desearchPostsFetcher.js";
 import { MockPostsFetcher } from "../src/fetch/postsFetcher.js";
 
 describe("createCliPostsFetcher", () => {
@@ -31,16 +31,22 @@ describe("createCliPostsFetcher", () => {
 
 describe("createPostsFetcherFromEnv", () => {
   let savedProvider: string | undefined;
+  let savedLive: string | undefined;
+  let savedKey: string | undefined;
 
   beforeEach(() => {
     savedProvider = process.env.POSTS_PROVIDER;
+    savedLive = process.env.DESEARCH_LIVE_ENABLED;
+    savedKey = process.env.DESEARCH_API_KEY;
   });
 
   afterEach(() => {
     if (savedProvider === undefined) delete process.env.POSTS_PROVIDER;
     else process.env.POSTS_PROVIDER = savedProvider;
-    delete process.env.DESEARCH_LIVE_ENABLED;
-    delete process.env.DESEARCH_API_KEY;
+    if (savedLive === undefined) delete process.env.DESEARCH_LIVE_ENABLED;
+    else process.env.DESEARCH_LIVE_ENABLED = savedLive;
+    if (savedKey === undefined) delete process.env.DESEARCH_API_KEY;
+    else process.env.DESEARCH_API_KEY = savedKey;
   });
 
   it("returns mock when provider is mock", () => {
@@ -48,13 +54,28 @@ describe("createPostsFetcherFromEnv", () => {
     assert.ok(createPostsFetcherFromEnv() instanceof MockPostsFetcher);
   });
 
-  it("fails closed for desearch without injected transport", () => {
+  it("returns mock when desearch is not live-eligible", () => {
+    process.env.POSTS_PROVIDER = "desearch";
+    process.env.DESEARCH_LIVE_ENABLED = "false";
+    process.env.DESEARCH_API_KEY = "unit-test-only-not-a-secret";
+    assert.ok(createPostsFetcherFromEnv() instanceof MockPostsFetcher);
+  });
+
+  it("returns DesearchPostsFetcher with injected transport when live-eligible", () => {
     process.env.POSTS_PROVIDER = "desearch";
     process.env.DESEARCH_LIVE_ENABLED = "true";
     process.env.DESEARCH_API_KEY = "unit-test-only-not-a-secret";
-    assert.throws(
-      () => createPostsFetcherFromEnv(),
-      DesearchNotConfiguredError,
-    );
+    const fetcher = createPostsFetcherFromEnv({
+      transport: { execute: async () => ({ status: 200, body: {} }) },
+    });
+    assert.ok(fetcher instanceof DesearchPostsFetcher);
+  });
+
+  it("uses default HTTPS transport factory when live-eligible and no override", () => {
+    process.env.POSTS_PROVIDER = "desearch";
+    process.env.DESEARCH_LIVE_ENABLED = "true";
+    process.env.DESEARCH_API_KEY = "unit-test-only-not-a-secret";
+    const fetcher = createPostsFetcherFromEnv();
+    assert.ok(fetcher instanceof DesearchPostsFetcher);
   });
 });

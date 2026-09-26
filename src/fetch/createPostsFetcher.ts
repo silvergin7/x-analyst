@@ -3,10 +3,9 @@ import { loadDesearchSettings } from "../config/desearchSettings.js";
 import type { PostsFetcher } from "./postsFetcher.js";
 import { MockPostsFetcher } from "./postsFetcher.js";
 import {
-  DesearchNotConfiguredError,
   DesearchPostsFetcher,
-  type DesearchPostsFetcherOptions,
 } from "./desearch/desearchPostsFetcher.js";
+import { createHttpDesearchTransport } from "./desearch/httpTransport.js";
 import type { DesearchTransport } from "./desearch/desearchTransport.js";
 
 /** Fetcher used by the CLI — always mock regardless of env vars. */
@@ -16,8 +15,8 @@ export function createCliPostsFetcher(): PostsFetcher {
 }
 
 /**
- * Resolve fetcher from env for future wiring. Fails closed for desearch without full live config.
- * Not called by the CLI in this prototype phase.
+ * Resolve fetcher from env. Live Desearch uses HTTPS only when fully eligible;
+ * otherwise returns mock fixtures. Not used by the CLI default path.
  */
 export function createPostsFetcherFromEnv(options?: {
   transport?: DesearchTransport;
@@ -27,16 +26,15 @@ export function createPostsFetcherFromEnv(options?: {
     return new MockPostsFetcher();
   }
 
-  if (!options?.transport) {
-    throw new DesearchNotConfiguredError(
-      "Desearch provider selected but no transport was injected. Live HTTP is not wired in this prototype.",
-    );
+  const settings = loadDesearchSettings();
+  if (!settings.liveEligible) {
+    return new MockPostsFetcher();
   }
 
-  const desearchOptions: DesearchPostsFetcherOptions = {
-    transport: options.transport,
+  const transport = options?.transport ?? createHttpDesearchTransport();
+  return new DesearchPostsFetcher({
+    transport,
     requireLiveEligible: true,
-    settings: loadDesearchSettings(),
-  };
-  return new DesearchPostsFetcher(desearchOptions);
+    settings,
+  });
 }

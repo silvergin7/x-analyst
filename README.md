@@ -60,19 +60,21 @@ Fixture post URLs use the fictional domain `fixture.x-analyst.local` — **not**
 
 ## Post provider (mock default)
 
-The CLI **always** uses `MockPostsFetcher` (local fixtures). No network requests are made on this branch.
+The CLI **always** uses `MockPostsFetcher` (local fixtures) via `npm run start`, **regardless of environment variables**. The default CLI path makes **no Desearch HTTP requests**.
 
-Optional future Desearch settings are documented in `.env.example` only:
+### Live Desearch (opt-in, not used by CLI)
 
-- `POSTS_PROVIDER=mock` (default)
-- `DESEARCH_API_KEY` — placeholder until you obtain credentials
-- `DESEARCH_LIVE_ENABLED=false` — must be `true` with a real key before any live Desearch path is allowed
+Non-CLI code paths that call `createPostsFetcherFromEnv()` can use live Desearch only when **all** of the following are set (see `.env.example`):
 
-`DesearchPostsFetcher` targets the documented **`GET /twitter/user/posts`** contract (`username`, optional `cursor`, raw API key in `Authorization`). It is used in tests and future wiring with an **injected transport only** — **no production HTTP transport** and **no live API requests** in this prototype.
+- `POSTS_PROVIDER=desearch`
+- `DESEARCH_LIVE_ENABLED=true`
+- `DESEARCH_API_KEY` set to a **real** key (not the placeholder)
 
-**Caps are not spend limits:** `MAX_POSTS_PER_PERSON` / `MAX_POSTS_TOTAL` limit how many posts are **kept for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP calls per run** (see `.env.example`). None of these guarantee a maximum Desearch bill; each response may include an undocumented number of billable posts. Confirm rates and usage in the Desearch Console before any live call.
+If any gate fails, the env factory falls back to **mock fixtures**. Live calls use **`GET https://api.desearch.ai/twitter/user/posts`** with the raw API key in the `Authorization` header (no `Bearer` prefix).
 
-Before live use: obtain credentials, implement a real transport behind the interface, and approve one capped test request with billing headers reviewed.
+**Caps are not dollar limits:** `MAX_POSTS_PER_PERSON` and `MAX_POSTS_TOTAL` limit how many posts are **retained for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP requests per run**. None of these caps guarantee a maximum Desearch bill—each response may return an undocumented number of billable posts. Confirm current rates and usage in the Desearch Console before enabling live mode.
+
+Copy `.env.example` to a local `.env` when you are ready; never commit secrets. Approve one capped live test before relying on production data.
 
 ## Secrets
 
