@@ -36,12 +36,36 @@ function readTmp(name) {
   return fs.readFileSync("/tmp/" + name, "utf8").trimEnd();
 }
 
-const changed = execSync("git status --short", { encoding: "utf8" })
-  .trim()
-  .split("\n")
-  .filter(Boolean)
-  .map(pathFromGitStatusLine)
-  .filter((f) => !f.endsWith("/"));
+/** Paths that must never appear in the audit even if Git lists them. */
+function isExcludedAuditPath(relPath) {
+  if (relPath === "REVIEW_FOR_AUDIT.md") return true;
+  if (relPath === ".env" || relPath.startsWith(".env.")) return true;
+  if (relPath.startsWith(".cursor/")) return true;
+  if (relPath.includes("node_modules")) return true;
+  return false;
+}
+
+function gitPaths(command) {
+  const out = execSync(command, { encoding: "utf8" }).trim();
+  if (out === "") return [];
+  return out.split("\n").filter(Boolean);
+}
+
+/**
+ * Tracked modifications (staged or unstaged) plus untracked non-ignored files.
+ * Untracked directories from porcelain status are expanded via ls-files --others.
+ */
+export function collectChangedFilesForAudit() {
+  const tracked = [
+    ...gitPaths("git diff --name-only"),
+    ...gitPaths("git diff --cached --name-only"),
+  ];
+  const untracked = gitPaths("git ls-files --others --exclude-standard");
+  const merged = [...tracked, ...untracked].filter((f) => !isExcludedAuditPath(f));
+  return [...new Set(merged)].sort();
+}
+
+const changed = collectChangedFilesForAudit();
 
 const branch = fs.existsSync("/tmp/audit_branch.txt")
   ? readTmp("audit_branch.txt")
