@@ -22,7 +22,8 @@ export interface FetchLimits {
 /** Machine-readable reason when retrieval did not cover all available posts. */
 export type FetchIncompleteReason =
   | "total_post_limit_reached"
-  | "per_person_limit_reached";
+  | "per_person_limit_reached"
+  | "desearch_request_budget_exhausted";
 
 export type FetchOutcome =
   | {
@@ -35,7 +36,7 @@ export type FetchOutcome =
   | {
       status: "incomplete";
       handle: string;
-      reason: "total_post_limit_reached";
+      reason: "total_post_limit_reached" | "desearch_request_budget_exhausted";
     }
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }

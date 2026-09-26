@@ -1,6 +1,41 @@
 /** Placeholder values in .env.example — never treat as real credentials. */
 export const DESEARCH_PLACEHOLDER_KEY = "replace_me_only_when_you_are_ready";
 
+const DEFAULT_MAX_REQUESTS_PER_RUN = 5;
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const trimmed = value.trim();
+  if (trimmed === "" || !/^\d+$/.test(trimmed)) return fallback;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 1 || !Number.isSafeInteger(n)) return fallback;
+  return n;
+}
+
+/**
+ * Caps HTTP calls to Desearch per fetch run (separate from post retention caps).
+ * Not a dollar spending limit — each request may return an undocumented number of billable posts.
+ */
+export function loadDesearchRequestBudget(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return parsePositiveInt(
+    env.DESEARCH_MAX_REQUESTS_PER_RUN,
+    DEFAULT_MAX_REQUESTS_PER_RUN,
+  );
+}
+
+/** Validate constructor override for max HTTP requests per run. */
+export function resolveMaxRequestsPerRunOverride(override?: number): number {
+  if (override === undefined) {
+    return loadDesearchRequestBudget();
+  }
+  if (!Number.isFinite(override) || !Number.isSafeInteger(override) || override < 1) {
+    return loadDesearchRequestBudget();
+  }
+  return override;
+}
+
 /** Non-secret Desearch configuration for eligibility checks and reporting. */
 export interface DesearchSettings {
   /** True only when provider is desearch, live flag set, and a usable key is present. */

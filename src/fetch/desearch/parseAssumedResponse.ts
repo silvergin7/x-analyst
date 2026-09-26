@@ -1,17 +1,15 @@
 import type { Post, PostKind } from "../../types.js";
-import type { AssumedDesearchPostItem } from "./assumedApiTypes.js";
+import type { DesearchTwitterPostItem } from "./assumedApiTypes.js";
 
 export type ParseResult =
   | {
       ok: true;
       posts: Post[];
-      /** Assumed API indicates additional pages exist (verify with official docs). */
-      hasMore: boolean;
+      /** True when response includes a non-empty next_cursor (more pages may exist). */
+      hasMorePages: boolean;
       nextCursor: string | undefined;
     }
   | { ok: false; reason: string };
-
-const LIST_KEYS = ["posts", "tweets", "data"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -32,34 +30,44 @@ function validatePostUrl(value: string): boolean {
 }
 
 /**
- * Post kind policy (assumed API — verify later):
- * - Use explicit `post_kind` when valid.
- * - Else infer from is_retweet / is_quote booleans.
- * - Else treat as `original` (conservative; do not infer repost/quote without signals).
+ * Classify post kind from documented booleans only.
+ * Missing or conflicting flags are rejected — never default to original.
  */
-function resolvePostKind(item: AssumedDesearchPostItem): PostKind {
-  if (item.post_kind === "original" || item.post_kind === "repost" || item.post_kind === "quote") {
-    return item.post_kind;
+function resolvePostKind(
+  item: DesearchTwitterPostItem,
+  index: number,
+): { ok: true; kind: PostKind } | { ok: false; reason: string } {
+  if (typeof item.is_retweet !== "boolean" || typeof item.is_quote_tweet !== "boolean") {
+    return {
+      ok: false,
+      reason: `item ${index}: is_retweet and is_quote_tweet must be booleans`,
+    };
   }
-  if (item.is_retweet === true) return "repost";
-  if (item.is_quote === true) return "quote";
-  return "original";
+  if (item.is_retweet === true && item.is_quote_tweet === true) {
+    return {
+      ok: false,
+      reason: `item ${index}: conflicting is_retweet and is_quote_tweet`,
+    };
+  }
+  if (item.is_retweet === true) return { ok: true, kind: "repost" };
+  if (item.is_quote_tweet === true) return { ok: true, kind: "quote" };
+  return { ok: true, kind: "original" };
 }
 
-function mapItem(
-  expectedHandle: string,
+function mapTweet(
+  expectedUsername: string,
   item: unknown,
   index: number,
 ): { ok: true; post: Post } | { ok: false; reason: string } {
   if (!isRecord(item)) {
     return { ok: false, reason: `item ${index}: not an object` };
   }
-  const raw = item as unknown as AssumedDesearchPostItem;
+  const raw = item as unknown as DesearchTwitterPostItem;
   if (typeof raw.id !== "string" || raw.id.trim() === "") {
-    return { ok: false, reason: `item ${index}: missing post id` };
+    return { ok: false, reason: `item ${index}: missing tweet id` };
   }
   if (typeof raw.text !== "string" || raw.text.trim() === "") {
-    return { ok: false, reason: `item ${index}: missing post text` };
+    return { ok: false, reason: `item ${index}: missing tweet text` };
   }
   if (typeof raw.created_at !== "string" || !validateTimestamp(raw.created_at)) {
     return { ok: false, reason: `item ${index}: invalid timestamp` };
@@ -67,101 +75,80 @@ function mapItem(
   if (typeof raw.url !== "string" || !validatePostUrl(raw.url)) {
     return { ok: false, reason: `item ${index}: invalid url` };
   }
-  if (typeof raw.username !== "string" || raw.username.trim() === "") {
-    return { ok: false, reason: `item ${index}: missing author handle` };
+  if (!isRecord(raw.user) || typeof raw.user.username !== "string") {
+    return { ok: false, reason: `item ${index}: missing tweet.user.username` };
   }
-  const authorHandle = raw.username.trim().toLowerCase();
-  if (authorHandle !== expectedHandle) {
-    return { ok: false, reason: `item ${index}: author handle mismatch` };
-  }
-
-  if (raw.is_retweet === true && raw.is_quote === true) {
-    return { ok: false, reason: `item ${index}: conflicting repost and quote flags` };
+  const authorHandle = raw.user.username.trim().toLowerCase();
+  if (authorHandle !== expectedUsername) {
+    return { ok: false, reason: `item ${index}: author username mismatch` };
   }
 
-  const kind = resolvePostKind(raw);
+  const kindResult = resolvePostKind(raw, index);
+  if (!kindResult.ok) return kindResult;
+
   const post: Post = {
     id: raw.id.trim(),
     authorHandle,
     text: raw.text,
     timestamp: raw.created_at,
     url: raw.url.trim(),
-    kind,
+    kind: kindResult.kind,
   };
-  if (kind === "quote" && typeof raw.quote_comment === "string" && raw.quote_comment.trim()) {
-    post.analystComment = raw.quote_comment;
-  }
   return { ok: true, post };
 }
 
-function extractListPayload(payload: unknown):
-  | { ok: true; items: unknown[]; hasMore: boolean; nextCursor: string | undefined }
+function readNextCursor(
+  payload: Record<string, unknown>,
+):
+  | { ok: true; hasMorePages: boolean; nextCursor: string | undefined }
   | { ok: false; reason: string } {
-  if (!isRecord(payload)) {
-    return { ok: false, reason: "top-level response is not an object" };
+  if (!("next_cursor" in payload)) {
+    return { ok: true, hasMorePages: false, nextCursor: undefined };
   }
-
-  let listKey: (typeof LIST_KEYS)[number] | undefined;
-  for (const key of LIST_KEYS) {
-    if (key in payload) {
-      if (listKey !== undefined) {
-        return { ok: false, reason: "conflicting list fields in response" };
-      }
-      listKey = key;
-    }
+  const c = payload.next_cursor;
+  if (c === null || c === undefined || c === "") {
+    return { ok: true, hasMorePages: false, nextCursor: undefined };
   }
-  if (listKey === undefined) {
-    return { ok: false, reason: "unrecognized assumed response shape" };
+  if (typeof c !== "string") {
+    return { ok: false, reason: "next_cursor must be a string when present" };
   }
-
-  const rawList = payload[listKey];
-  if (!Array.isArray(rawList)) {
-    return { ok: false, reason: `${listKey} is not an array` };
+  const trimmed = c.trim();
+  if (trimmed === "") {
+    return { ok: true, hasMorePages: false, nextCursor: undefined };
   }
-
-  let hasMore = false;
-  if ("has_more" in payload) {
-    if (typeof payload.has_more !== "boolean") {
-      return { ok: false, reason: "has_more must be boolean when present" };
-    }
-    hasMore = payload.has_more;
-  }
-
-  let nextCursor: string | undefined;
-  if ("next_cursor" in payload) {
-    const c = payload.next_cursor;
-    if (c !== null && c !== undefined && typeof c !== "string") {
-      return { ok: false, reason: "next_cursor must be a string when present" };
-    }
-    nextCursor = typeof c === "string" && c.trim() !== "" ? c : undefined;
-  }
-
-  if (hasMore && !nextCursor) {
-    return { ok: false, reason: "has_more true but next_cursor missing" };
-  }
-
-  return { ok: true, items: rawList, hasMore, nextCursor };
+  return { ok: true, hasMorePages: true, nextCursor: trimmed };
 }
 
 /**
- * Map assumed Desearch JSON to internal posts. External fields are untrusted.
+ * Map documented GET /twitter/user/posts JSON to internal posts.
  */
-export function parseAssumedDesearchResponse(
-  expectedHandle: string,
+export function parseTwitterUserPostsResponse(
+  expectedUsername: string,
   payload: unknown,
 ): ParseResult {
-  const top = extractListPayload(payload);
-  if (!top.ok) return top;
+  if (!isRecord(payload)) {
+    return { ok: false, reason: "top-level response is not an object" };
+  }
+  if (!("tweets" in payload)) {
+    return { ok: false, reason: "missing tweets array" };
+  }
+  if (!Array.isArray(payload.tweets)) {
+    return { ok: false, reason: "tweets is not an array" };
+  }
 
-  if (top.items.length === 0) {
-    return { ok: true, posts: [], hasMore: top.hasMore, nextCursor: top.nextCursor };
+  const cursorResult = readNextCursor(payload);
+  if (!cursorResult.ok) return cursorResult;
+  const { hasMorePages, nextCursor } = cursorResult;
+
+  if (payload.tweets.length === 0) {
+    return { ok: true, posts: [], hasMorePages, nextCursor };
   }
 
   const posts: Post[] = [];
   const seenIds = new Set<string>();
 
-  for (let i = 0; i < top.items.length; i++) {
-    const mapped = mapItem(expectedHandle, top.items[i], i);
+  for (let i = 0; i < payload.tweets.length; i++) {
+    const mapped = mapTweet(expectedUsername, payload.tweets[i], i);
     if (!mapped.ok) return mapped;
     if (seenIds.has(mapped.post.id)) {
       return { ok: false, reason: `duplicate post id ${mapped.post.id}` };
@@ -170,10 +157,8 @@ export function parseAssumedDesearchResponse(
     posts.push(mapped.post);
   }
 
-  return {
-    ok: true,
-    posts,
-    hasMore: top.hasMore,
-    nextCursor: top.nextCursor,
-  };
+  return { ok: true, posts, hasMorePages, nextCursor };
 }
+
+/** @deprecated Use parseTwitterUserPostsResponse. */
+export const parseAssumedDesearchResponse = parseTwitterUserPostsResponse;

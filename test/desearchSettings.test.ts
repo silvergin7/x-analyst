@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   DESEARCH_PLACEHOLDER_KEY,
+  loadDesearchRequestBudget,
   loadDesearchSettings,
   resolveDesearchApiKey,
+  resolveMaxRequestsPerRunOverride,
 } from "../src/config/desearchSettings.js";
 
 const KEYS = [
@@ -56,6 +58,58 @@ describe("loadDesearchSettings", () => {
     assert.equal(s.liveEligible, true);
     assert.equal(s.hasUsableCredential, true);
     assert.equal("apiKey" in s, false);
+  });
+});
+
+describe("loadDesearchRequestBudget", () => {
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env.DESEARCH_MAX_REQUESTS_PER_RUN;
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DESEARCH_MAX_REQUESTS_PER_RUN;
+    else process.env.DESEARCH_MAX_REQUESTS_PER_RUN = saved;
+  });
+
+  it("defaults to a conservative positive integer", () => {
+    delete process.env.DESEARCH_MAX_REQUESTS_PER_RUN;
+    assert.equal(loadDesearchRequestBudget(), 5);
+  });
+
+  it("accepts positive whole integers", () => {
+    process.env.DESEARCH_MAX_REQUESTS_PER_RUN = "3";
+    assert.equal(loadDesearchRequestBudget(), 3);
+  });
+});
+
+describe("resolveMaxRequestsPerRunOverride", () => {
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env.DESEARCH_MAX_REQUESTS_PER_RUN;
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DESEARCH_MAX_REQUESTS_PER_RUN;
+    else process.env.DESEARCH_MAX_REQUESTS_PER_RUN = saved;
+  });
+
+  it("falls back to configured env budget for invalid overrides", () => {
+    process.env.DESEARCH_MAX_REQUESTS_PER_RUN = "1";
+    assert.equal(resolveMaxRequestsPerRunOverride(-3), 1);
+    assert.equal(resolveMaxRequestsPerRunOverride(0), 1);
+    assert.equal(resolveMaxRequestsPerRunOverride(1.5), 1);
+  });
+
+  it("falls back to default when env unset and override invalid", () => {
+    delete process.env.DESEARCH_MAX_REQUESTS_PER_RUN;
+    assert.equal(resolveMaxRequestsPerRunOverride(-1), 5);
+  });
+
+  it("accepts positive safe integers", () => {
+    assert.equal(resolveMaxRequestsPerRunOverride(2), 2);
   });
 });
 

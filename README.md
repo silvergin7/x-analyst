@@ -68,7 +68,11 @@ Optional future Desearch settings are documented in `.env.example` only:
 - `DESEARCH_API_KEY` — placeholder until you obtain credentials
 - `DESEARCH_LIVE_ENABLED=false` — must be `true` with a real key before any live Desearch path is allowed
 
-`DesearchPostsFetcher` exists for tests and future wiring with an **injected transport only**. This branch includes **no production HTTP transport** and makes **no live API requests**. Assumed response shapes are placeholders until official Desearch documentation and credentials are available. Before live use: obtain Desearch credentials, confirm the API contract, implement a real transport behind the interface, and approve one capped test request.
+`DesearchPostsFetcher` targets the documented **`GET /twitter/user/posts`** contract (`username`, optional `cursor`, raw API key in `Authorization`). It is used in tests and future wiring with an **injected transport only** — **no production HTTP transport** and **no live API requests** in this prototype.
+
+**Caps are not spend limits:** `MAX_POSTS_PER_PERSON` / `MAX_POSTS_TOTAL` limit how many posts are **kept for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP calls per run** (see `.env.example`). None of these guarantee a maximum Desearch bill; each response may include an undocumented number of billable posts. Confirm rates and usage in the Desearch Console before any live call.
+
+Before live use: obtain credentials, implement a real transport behind the interface, and approve one capped test request with billing headers reviewed.
 
 ## Secrets
 

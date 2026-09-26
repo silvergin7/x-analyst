@@ -1,24 +1,30 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildDesearchPostsRequest } from "../../src/fetch/desearch/buildRequest.js";
+import {
+  buildTwitterUserPostsRequest,
+  TWITTER_USER_POSTS_PATH,
+} from "../../src/fetch/desearch/buildRequest.js";
 
-describe("buildDesearchPostsRequest", () => {
-  it("builds per-handle request with limit and auth header", () => {
-    const req = buildDesearchPostsRequest("bullmacro", 5, "secret-key-value");
+describe("buildTwitterUserPostsRequest", () => {
+  it("builds documented path with username and raw Authorization", () => {
+    const req = buildTwitterUserPostsRequest("bullmacro", "secret-key-value");
     assert.equal(req.method, "GET");
-    assert.match(req.url, /handle=bullmacro/);
-    assert.match(req.url, /limit=5/);
-    assert.equal(req.headers.Authorization, "Bearer secret-key-value");
+    const u = new URL(req.url);
+    assert.equal(u.pathname, TWITTER_USER_POSTS_PATH);
+    assert.equal(u.searchParams.get("username"), "bullmacro");
+    assert.equal(u.searchParams.has("limit"), false);
+    assert.equal(req.headers.Authorization, "secret-key-value");
+    assert.doesNotMatch(req.headers.Authorization ?? "", /^Bearer /);
   });
 
   it("does not embed key material in the URL", () => {
-    const req = buildDesearchPostsRequest("a", 1, "my-secret");
+    const req = buildTwitterUserPostsRequest("a", "my-secret");
     assert.doesNotMatch(req.url, /my-secret/);
   });
 
   it("includes cursor when paginating", () => {
-    const req = buildDesearchPostsRequest("a", 2, "key", "cursor-abc");
-    assert.match(req.url, /cursor=cursor-abc/);
+    const req = buildTwitterUserPostsRequest("a", "key", "cursor-abc");
+    assert.equal(new URL(req.url).searchParams.get("cursor"), "cursor-abc");
     assert.doesNotMatch(req.url, /key/);
   });
 });

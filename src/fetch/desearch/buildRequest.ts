@@ -1,5 +1,7 @@
-/** Assumed base URL — confirm with official Desearch docs before live use. */
-export const ASSUMED_DESEARCH_API_BASE = "https://api.desearch.ai";
+/** Documented Desearch API base URL. */
+export const DESEARCH_API_BASE = "https://api.desearch.ai";
+
+export const TWITTER_USER_POSTS_PATH = "/twitter/user/posts";
 
 export interface DesearchPostsRequest {
   method: "GET";
@@ -8,18 +10,16 @@ export interface DesearchPostsRequest {
 }
 
 /**
- * Build a request descriptor for per-handle post retrieval (no network I/O).
- * Authorization header value must never be logged or included in error messages.
+ * Build GET /twitter/user/posts (no network I/O).
+ * Authorization must be the raw API key per official docs — never log it.
  */
-export function buildDesearchPostsRequest(
-  handle: string,
-  maxPosts: number,
+export function buildTwitterUserPostsRequest(
+  username: string,
   apiKey: string,
   cursor?: string,
 ): DesearchPostsRequest {
-  const url = new URL(`${ASSUMED_DESEARCH_API_BASE}/v1/posts/by-handle`);
-  url.searchParams.set("handle", handle);
-  url.searchParams.set("limit", String(maxPosts));
+  const url = new URL(`${DESEARCH_API_BASE}${TWITTER_USER_POSTS_PATH}`);
+  url.searchParams.set("username", username);
   if (cursor) {
     url.searchParams.set("cursor", cursor);
   }
@@ -28,12 +28,11 @@ export function buildDesearchPostsRequest(
     url: url.toString(),
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Authorization: apiKey,
     },
   };
 }
 
-/** Read requested limit from a built request URL (for tests). */
-export function readRequestLimit(request: DesearchPostsRequest): number {
-  return Number.parseInt(new URL(request.url).searchParams.get("limit") ?? "0", 10);
-}
+/** @deprecated Use buildTwitterUserPostsRequest. Kept as alias during migration. */
+export const buildDesearchPostsRequest = buildTwitterUserPostsRequest;

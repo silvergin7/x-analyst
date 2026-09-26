@@ -1,4 +1,5 @@
 import {
+  resolveMaxRequestsPerRunOverride,
   loadDesearchSettings,
   resolveDesearchApiKey,
   type DesearchSettings,
@@ -23,14 +24,17 @@ export interface DesearchPostsFetcherOptions {
   settings?: DesearchSettings;
   /** Credential for request signing (tests inject here; otherwise read from env at boundary). */
   credential?: string;
+  /** Override request budget (HTTP calls per run). */
+  maxRequestsPerRun?: number;
 }
 
 /**
- * Desearch-backed PostsFetcher (assumed API contract). Not used by CLI default path.
+ * Desearch-backed PostsFetcher (GET /twitter/user/posts). Not used by CLI default path.
  */
 export class DesearchPostsFetcher implements PostsFetcher {
   private readonly transport: DesearchTransport;
   private readonly credential: string;
+  private readonly maxRequestsPerRun: number;
 
   constructor(options: DesearchPostsFetcherOptions) {
     const settings = options.settings ?? loadDesearchSettings();
@@ -47,6 +51,9 @@ export class DesearchPostsFetcher implements PostsFetcher {
     }
     this.transport = options.transport;
     this.credential = credential;
+    this.maxRequestsPerRun = resolveMaxRequestsPerRunOverride(
+      options.maxRequestsPerRun,
+    );
   }
 
   async fetchForHandles(
@@ -55,6 +62,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
   ): Promise<FetchOutcome[]> {
     const outcomes: FetchOutcome[] = [];
     let remainingTotal = limits.maxPostsTotal;
+    let requestBudgetRemaining = this.maxRequestsPerRun;
 
     for (const raw of handles) {
       const validation = validateHandle(raw);
@@ -78,6 +86,15 @@ export class DesearchPostsFetcher implements PostsFetcher {
         continue;
       }
 
+      if (requestBudgetRemaining <= 0) {
+        outcomes.push({
+          status: "incomplete",
+          handle,
+          reason: "desearch_request_budget_exhausted",
+        });
+        continue;
+      }
+
       const maxPostsThisHandle = Math.min(limits.maxPostsPerPerson, remainingTotal);
 
       const pageResult = await fetchHandlePages(
@@ -87,11 +104,22 @@ export class DesearchPostsFetcher implements PostsFetcher {
         {
           maxPostsThisHandle,
           remainingTotalCap: remainingTotal,
+          requestBudgetRemaining,
         },
       );
 
+      requestBudgetRemaining -= pageResult.requestsUsed;
+
       if (pageResult.posts.length === 0) {
-        outcomes.push({ status: "empty", handle });
+        if (pageResult.apiHasMorePages || pageResult.stoppedDueToRequestBudget) {
+          outcomes.push({
+            status: "incomplete",
+            handle,
+            reason: "desearch_request_budget_exhausted",
+          });
+        } else {
+          outcomes.push({ status: "empty", handle });
+        }
         continue;
       }
 
@@ -102,11 +130,18 @@ export class DesearchPostsFetcher implements PostsFetcher {
         remainingTotal,
       );
 
-      if (outcome.status === "ok" && pageResult.apiExhaustedForCaps) {
-        const incompleteReason: FetchIncompleteReason =
-          pageResult.posts.length >= limits.maxPostsPerPerson
-            ? "per_person_limit_reached"
-            : "total_post_limit_reached";
+      if (
+        outcome.status === "ok" &&
+        (pageResult.apiHasMorePages || pageResult.truncatedLastResponse)
+      ) {
+        let incompleteReason: FetchIncompleteReason;
+        if (pageResult.stoppedDueToRequestBudget) {
+          incompleteReason = "desearch_request_budget_exhausted";
+        } else if (pageResult.posts.length >= limits.maxPostsPerPerson) {
+          incompleteReason = "per_person_limit_reached";
+        } else {
+          incompleteReason = "total_post_limit_reached";
+        }
         outcomes.push({
           ...outcome,
           retrievalComplete: false,
