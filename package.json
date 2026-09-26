@@ -7,15 +7,24 @@
   "scripts": {
     "start": "tsx src/cli.ts",
     "dev:server": "tsx server/main.ts",
+    "dev:web": "vite --config web/vite.config.ts",
     "test": "node --import tsx --test test/*.test.ts test/desearch/*.test.ts test/format/*.test.ts test/server/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   }
 }
