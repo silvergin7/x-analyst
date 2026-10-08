@@ -1,8 +1,20 @@
-# x-analyst (mock CLI prototype)
+# x-analyst (local mock prototype)
 
-**This version uses fictional posts and deterministic mock analysis only.** It makes **no live API calls** (no Desearch, no LLM) and **incurs no data or LLM charges.**
+Local-first prototype: a manual list of analyst handles, a bounded slice of **that person's** recent posts, and a per-person market-outlook report with linked evidence.
 
-Local command-line prototype: enter a few analyst handles, retrieve a bounded slice of **fixture** posts per person, and print a per-person market-outlook report with evidence links (fictional URLs).
+**Default paths use fictional fixture posts and deterministic keyword rules.** `npm run start`, `npm run dev:server`, and `npm run dev:web` make **no live Desearch, X, or LLM calls** and **incur no data or model charges.**
+
+## End-goal product
+
+A local web app for one person on their own machine.
+
+They enter a few analyst handles and a question, then run it once. The default question is each analyst’s current market outlook. For every handle, the app loads a bounded recent slice of **that account’s own posts** from Desearch. An LLM reads those posts as source material and returns one outlook per person: bullish, bearish, cautious, or unclear.
+
+Each result shows the outlook, a short explanation, the dates and number of posts examined, whether that slice was complete, and links to the posts that support the call. Every link keeps the author, time, post id, URL, and whether the post is an original, a repost, or a quote. The explanation separates the analyst’s own words from reposts, quotes, sarcasm, stale remarks, and the model’s reading. Thin evidence stays unclear. A handle that was never fetched has no outlook line. The same run can be printed from the CLI.
+
+When Desearch or the LLM reports usage or cost, the app shows it. A repeated run reuses a fetch it already paid for. Limits and model names stay in config.
+
+It stays a single-user local tool: a manual roster, with no accounts, hosted deployment, database, background jobs, or X List / OAuth sync.
 
 ## Requirements
 
@@ -14,7 +26,7 @@ Local command-line prototype: enter a few analyst handles, retrieve a bounded sl
 npm install
 ```
 
-## Run
+## CLI
 
 Default handles (`bullmacro`, `bearmacro`, `unclearmacro`) and default question:
 
@@ -28,13 +40,34 @@ Custom handles and question:
 npm run start -- --handles bullmacro,bearmacro,unclearmacro --question "What is each analyst's current market outlook?"
 ```
 
-Optional limits (for future live fetch parity):
+Optional retention caps (also apply to the mock web API, which calls the same report runner):
 
 ```bash
 MAX_POSTS_PER_PERSON=5 MAX_POSTS_TOTAL=12 npm run start
 ```
 
-When a limit prevents retrieving all fixture posts, the CLI reports **partial** retrieval or **incomplete** retrieval (analyst not examined). Analysts skipped because `MAX_POSTS_TOTAL` was exhausted do **not** receive an `unclear` outlook line.
+When a cap stops a full fixture slice, the CLI reports **partial** retrieval (outlook from the posts that were kept) or **incomplete** retrieval (analyst not examined, no outlook line). Handles skipped because `MAX_POSTS_TOTAL` was already used do **not** get an `unclear` outlook.
+
+The CLI always uses `MockPostsFetcher`, regardless of environment variables.
+
+## Local web preview
+
+Two processes. The API binds to loopback only.
+
+```bash
+npm run dev:server
+```
+
+```bash
+npm run dev:web
+```
+
+- API: `http://127.0.0.1:3001` (`PORT` overrides the port)
+- Vite: `http://127.0.0.1:5173`, proxying `/api` to the API
+
+The page is a demo shell: a mock-mode banner and a check of `GET /api/meta`. The analyze form and analyst cards are not built yet.
+
+`POST /api/analyze` already runs the same mock report as the CLI. Body: `{ "handles": "bullmacro,bearmacro", "question": "..." }`. It returns `{ mode, question, invalidHandles, fetchOutcomes, reports }`. The browser does not call this route yet.
 
 ## Test and typecheck
 
@@ -43,39 +76,35 @@ npm test
 npm run typecheck
 ```
 
-## What is mocked
+`npm test` runs the Node test runner over `test/`, `test/desearch/`, `test/format/`, and `test/server/`. `npm run typecheck` checks the Node project and `web/tsconfig.json`.
 
-| Piece | Current implementation | Future replacement |
-|-------|------------------------|--------------------|
-| Post retrieval | `MockPostsFetcher` reads `src/fixtures/samplePosts.ts` | Desearch (or similar) client implementing `PostsFetcher` |
-| Outlook analysis | `MockOutlookAnalyzer` uses simple keyword rules | LLM client implementing `OutlookAnalyzer` |
+## What is mocked on the default path
 
-Fixture post URLs use the fictional domain `fixture.x-analyst.local` — **not** live X links.
+| Piece | Current default | Later replacement |
+|-------|-----------------|-------------------|
+| Post retrieval | `MockPostsFetcher` reads `src/fixtures/samplePosts.ts` | `DesearchPostsFetcher` behind `createPostsFetcherFromEnv()` |
+| Outlook analysis | `MockOutlookAnalyzer` keyword rules | An `OutlookAnalyzer` implementation that calls an LLM |
+| Web UI | Banner plus `/api/meta` status | Handles, question, and per-analyst cards |
 
-## Limitations
+Fixture URLs use `https://fixture.x-analyst.local/...`. They are not live X links. Fixture handles: `bullmacro`, `bearmacro`, `unclearmacro`, `emptymacro` (empty list).
 
-- Manual handle list only; no X Lists or OAuth.
-- No database, web UI, auth, or deployment.
-- Mock analysis is **not** LLM inference; do not treat output as verified market research.
+## Live Desearch (opt-in code, unused by CLI and web)
 
-## Post provider (mock default)
-
-The CLI **always** uses `MockPostsFetcher` (local fixtures) via `npm run start`, **regardless of environment variables**. The default CLI path makes **no Desearch HTTP requests**.
-
-### Live Desearch (opt-in, not used by CLI)
-
-Non-CLI code paths that call `createPostsFetcherFromEnv()` can use live Desearch only when **all** of the following are set (see `.env.example`):
+`createPostsFetcherFromEnv()` can return a live fetcher only when **all** of the following are set (see `.env.example`):
 
 - `POSTS_PROVIDER=desearch`
 - `DESEARCH_LIVE_ENABLED=true`
-- `DESEARCH_API_KEY` set to a **real** key (not the placeholder)
+- `DESEARCH_API_KEY` set to a real key (not the placeholder `replace_me_only_when_you_are_ready`)
 
-If any gate fails, the env factory falls back to **mock fixtures**. Live calls use **`GET https://api.desearch.ai/twitter/user/posts`** with the raw API key in the `Authorization` header (no `Bearer` prefix).
+If any gate fails, that factory returns mock fixtures. Live calls use **`GET https://api.desearch.ai/twitter/user/posts`**. The `Authorization` header is the raw API key (no `Bearer` prefix).
 
-**Caps are not dollar limits:** `MAX_POSTS_PER_PERSON` and `MAX_POSTS_TOTAL` limit how many posts are **retained for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP requests per run**. None of these caps guarantee a maximum Desearch bill—each response may return an undocumented number of billable posts. Confirm current rates and usage in the Desearch Console before enabling live mode.
+**Caps are not dollar limits.** `MAX_POSTS_PER_PERSON` and `MAX_POSTS_TOTAL` limit posts **kept for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP requests per run** (default 5). A response can still contain an undocumented number of billable posts. Confirm current rates in the Desearch console before any live call. Copy `.env.example` to a local `.env` only when you intend to use live services. Do not commit `.env`.
 
-Copy `.env.example` to a local `.env` when you are ready; never commit secrets. Approve one capped live test before relying on production data.
+There is no LLM client yet. `PersonOutlookReport.analysisSource` is always `"mock"`.
 
-## Secrets
+## Limitations
 
-Copy `.env.example` to `.env` locally when ready for live services. Never commit `.env`, real API keys, or sensitive API responses.
+- Roster is a manual handle list. No X Lists, OAuth, accounts, database, or deployment.
+- Mock analysis is keyword rules, not model inference. Do not treat the report as verified market research.
+- The web UI does not submit an analysis yet.
+- Retrieved posts are untrusted data. Reports keep author, timestamp, post id, URL, and post kind on every citation.
