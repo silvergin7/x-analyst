@@ -65,9 +65,11 @@ npm run dev:web
 - API: `http://127.0.0.1:3001` (`PORT` overrides the port)
 - Vite: `http://127.0.0.1:5173`, proxying `/api` to the API
 
-The page is a demo shell: a mock-mode banner and a check of `GET /api/meta`. The analyze form and analyst cards are not built yet.
+The page keeps a mock-mode banner and a check of `GET /api/meta`. It also has handles and question fields. The question starts as `What is each analyst's current market outlook?`. Submitting the form calls the existing `POST /api/analyze` and shows one card per returned report: handle, outlook, explanation, dates examined, post count, retrieval coverage, and evidence. Evidence URLs are labeled as fictional fixture links. Invalid, unknown, empty, and unexamined handles are separate status lines, with no outlook card.
 
-`POST /api/analyze` already runs the same mock report as the CLI. Body: `{ "handles": "bullmacro,bearmacro", "question": "..." }`. It returns `{ mode, question, invalidHandles, fetchOutcomes, reports }`. The browser does not call this route yet.
+The mock analyzer uses fixed keyword rules. Changing the question does not change the analysis.
+
+`POST /api/analyze` body: `{ "handles": "bullmacro,bearmacro", "question": "..." }`. It returns `{ mode, question, invalidHandles, fetchOutcomes, reports }`.
 
 ## Test and typecheck
 
@@ -76,7 +78,7 @@ npm test
 npm run typecheck
 ```
 
-`npm test` runs the Node test runner over `test/`, `test/desearch/`, `test/format/`, and `test/server/`. `npm run typecheck` checks the Node project and `web/tsconfig.json`.
+`npm test` runs the Node test runner over `test/`, `test/desearch/`, `test/format/`, and `test/server/`, then `vitest run --config web/vitest.config.ts` for the web UI. `npm run typecheck` checks the Node project and `web/tsconfig.json`.
 
 ## What is mocked on the default path
 
@@ -84,7 +86,7 @@ npm run typecheck
 |-------|-----------------|-------------------|
 | Post retrieval | `MockPostsFetcher` reads `src/fixtures/samplePosts.ts` | `DesearchPostsFetcher` behind `createPostsFetcherFromEnv()` |
 | Outlook analysis | `MockOutlookAnalyzer` keyword rules | An `OutlookAnalyzer` implementation that calls an LLM |
-| Web UI | Banner plus `/api/meta` status | Handles, question, and per-analyst cards |
+| Web UI | Form submits to `/api/analyze` and shows mock report cards | Live Desearch posts and an LLM outlook |
 
 Fixture URLs use `https://fixture.x-analyst.local/...`. They are not live X links. Fixture handles: `bullmacro`, `bearmacro`, `unclearmacro`, `emptymacro` (empty list).
 
@@ -106,5 +108,4 @@ There is no LLM client yet. `PersonOutlookReport.analysisSource` is always `"moc
 
 - Roster is a manual handle list. No X Lists, OAuth, accounts, database, or deployment.
 - Mock analysis is keyword rules, not model inference. Do not treat the report as verified market research.
-- The web UI does not submit an analysis yet.
 - Retrieved posts are untrusted data. Reports keep author, timestamp, post id, URL, and post kind on every citation.
