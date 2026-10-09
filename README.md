@@ -85,7 +85,7 @@ npm run typecheck
 | Piece | Current default | Later replacement |
 |-------|-----------------|-------------------|
 | Post retrieval | `MockPostsFetcher` reads `src/fixtures/samplePosts.ts` | `DesearchPostsFetcher` behind `createPostsFetcherFromEnv()` |
-| Outlook analysis | `MockOutlookAnalyzer` keyword rules | An `OutlookAnalyzer` implementation that calls an LLM |
+| Outlook analysis | `MockOutlookAnalyzer` keyword rules on the CLI, API, and web UI | Opt-in `LlmOutlookAnalyzer` via `npm run analyze:llm-fixture` |
 | Web UI | Form submits to `/api/analyze` and shows mock report cards | Live Desearch posts and an LLM outlook |
 
 Fixture URLs use `https://fixture.x-analyst.local/...`. They are not live X links. Fixture handles: `bullmacro`, `bearmacro`, `unclearmacro`, `emptymacro` (empty list).
@@ -102,7 +102,24 @@ If any gate fails, that factory returns mock fixtures. Live calls use **`GET htt
 
 **Caps are not dollar limits.** `MAX_POSTS_PER_PERSON` and `MAX_POSTS_TOTAL` limit posts **kept for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP requests per run** (default 5). A response can still contain an undocumented number of billable posts. Confirm current rates in the Desearch console before any live call. Copy `.env.example` to a local `.env` only when you intend to use live services. Do not commit `.env`.
 
-There is no LLM client yet. `PersonOutlookReport.analysisSource` is always `"mock"`.
+## Opt-in Chutes fixture check
+
+`npm start`, the API, and the web UI still construct `MockOutlookAnalyzer` and do not read the Chutes flags. `PersonOutlookReport.analysisSource` on those paths stays `"mock"`.
+
+`npm run analyze:llm-fixture -- <handle>` reads one fixture handle through `MockPostsFetcher`. It calls Chutes only when all of the following are true (see `.env.example`):
+
+- `ANALYSIS_PROVIDER=chutes`
+- `LLM_LIVE_ENABLED=true`
+- `CHUTES_API_KEY` set to a real key (not the placeholder `replace_me_only_when_you_are_ready`)
+- `LLM_MODEL=Qwen/Qwen3-32B-TEE`
+
+The request goes to `https://llm.chutes.ai/v1/chat/completions` with `max_tokens` 800, `/no_think`, and strict JSON schema. The coded rates are $0.104 per million input tokens and $0.416 per million output tokens. `$0.05` is a local budget for one later approved call. Chutes does not enforce that dollar amount. Before a request, the command prints a pessimistic ceiling: one token per UTF-8 byte of the serialized request, plus 32 tokens of framing per message. That ceiling is not provider-reported usage. A higher estimate, or any other model name, stops before the request. A model change needs a new rate and a new estimate.
+
+The question is limited to 500 characters. At most 10 eligible posts are sent, and each text is cut at 1,000 characters. Original posts send their own text. A quote sends only non-empty analyst commentary. Reposts and quotes without that commentary are excluded and are not described as model-examined. Retrieval coverage stays the fetch result. Citation metadata is copied from the supplied posts. A refusal, a non-200 response, or `finish_reason` `length` fails the run. There is no retry, fallback, or limit increase. When a failed response includes token usage, the command prints that usage separately from the failure. Transport failures print a fixed message and do not echo the underlying error text.
+
+Optional `--as-of YYYY-MM-DD` sets the analysis reference date used for “current”. When omitted, the command uses the UTC date of the run. The output labels the run as a synthetic fixture test, not current real-world research.
+
+Do not run this command until a separate live-call approval. Automated tests mock the HTTP response and do not call Chutes.
 
 ## Limitations
 

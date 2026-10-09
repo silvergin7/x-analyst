@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/cli.ts",
+    "analyze:llm-fixture": "tsx src/llmFixtureCheck.ts",
     "dev:server": "tsx server/main.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "test": "node --import tsx --test test/*.test.ts test/desearch/*.test.ts test/format/*.test.ts test/server/*.test.ts && vitest run --config web/vitest.config.ts",
