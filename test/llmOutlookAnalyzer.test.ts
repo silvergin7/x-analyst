@@ -334,27 +334,15 @@ describe("LlmOutlookAnalyzer", () => {
     assert.match(report.explanation, /fixture text/);
   });
 
-  it("keeps the default report path on the mock analyzer when Chutes flags are set", async () => {
-    const previous = {
-      ANALYSIS_PROVIDER: process.env.ANALYSIS_PROVIDER,
-      LLM_LIVE_ENABLED: process.env.LLM_LIVE_ENABLED,
-      CHUTES_API_KEY: process.env.CHUTES_API_KEY,
-      LLM_MODEL: process.env.LLM_MODEL,
-    };
-    process.env.ANALYSIS_PROVIDER = "chutes";
-    process.env.LLM_LIVE_ENABLED = "true";
-    process.env.CHUTES_API_KEY = "test-key";
-    process.env.LLM_MODEL = PRICED_LLM_MODEL;
-    try {
-      const result = await runReport(["bullmacro"], question);
-      assert.equal(result.reports[0]?.analysisSource, "mock");
-      assert.match(result.reports[0]?.explanation ?? "", /Mock analysis/);
-    } finally {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
+  it("keeps the shared report path on the mock analyzer when analysis gates are unset", async () => {
+    const result = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-10-09",
+      env: {},
+    });
+    assert.equal(result.postsSource, "fixtures");
+    assert.equal(result.analysisSource, "mock-rules");
+    assert.equal(result.reports[0]?.analysisSource, "mock");
+    assert.match(result.reports[0]?.explanation ?? "", /Mock analysis/);
   });
 });
 

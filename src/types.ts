@@ -25,7 +25,19 @@ export type FetchIncompleteReason =
   | "per_person_limit_reached"
   | "desearch_request_budget_exhausted";
 
-export type FetchOutcome =
+export type PostSource = "fixtures" | "desearch";
+
+export type AnalysisProviderLabel = "mock-rules" | "chutes";
+
+/** Billing fields Desearch actually returned. Missing fields stay missing. */
+export interface DesearchBilling {
+  costUsd?: number;
+  usageCount?: number;
+  service?: string;
+  currency?: string;
+}
+
+type FetchOutcomeShape =
   | {
       status: "ok";
       handle: string;
@@ -41,6 +53,10 @@ export type FetchOutcome =
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }
   | { status: "empty"; handle: string };
+
+export type FetchOutcome = FetchOutcomeShape & {
+  billing?: DesearchBilling[];
+};
 
 export type MarketOutlook =
   | "bullish"

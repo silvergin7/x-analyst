@@ -14,14 +14,16 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 }
 
 /** Load fetch limits from env with conservative defaults. */
-export function loadFetchLimits(): FetchLimits {
+export function loadFetchLimits(
+  env: NodeJS.ProcessEnv = process.env,
+): FetchLimits {
   return {
     maxPostsPerPerson: parsePositiveInt(
-      process.env.MAX_POSTS_PER_PERSON,
+      env.MAX_POSTS_PER_PERSON,
       DEFAULT_MAX_POSTS_PER_PERSON,
     ),
     maxPostsTotal: parsePositiveInt(
-      process.env.MAX_POSTS_TOTAL,
+      env.MAX_POSTS_TOTAL,
       DEFAULT_MAX_POSTS_TOTAL,
     ),
   };

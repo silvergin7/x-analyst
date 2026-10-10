@@ -65,5 +65,20 @@ describe("parseCliArgs", () => {
     assert.deepEqual(opts.handles, ["bullmacro", "bearmacro"]);
     assert.equal(opts.question, "What now?");
     assert.equal(opts.flagErrors.length, 0);
+    assert.equal(opts.fresh, false);
+    assert.equal(opts.asOf, undefined);
+  });
+
+  it("parses --fresh and a real --as-of date", () => {
+    const opts = parseCliArgs(["--fresh", "--as-of", "2026-10-09"]);
+    assert.equal(opts.fresh, true);
+    assert.equal(opts.asOf, "2026-10-09");
+    assert.equal(opts.flagErrors.length, 0);
+  });
+
+  it("rejects an impossible --as-of date", () => {
+    const opts = parseCliArgs(["--as-of", "2026-02-31"]);
+    assert.ok(opts.flagErrors.some((error) => error.includes("--as-of")));
+    assert.equal(opts.asOf, undefined);
   });
 });

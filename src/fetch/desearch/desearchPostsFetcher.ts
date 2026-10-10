@@ -5,11 +5,27 @@ import {
   type DesearchSettings,
 } from "../../config/desearchSettings.js";
 import { validateHandle } from "../../validation/handles.js";
-import type { FetchIncompleteReason, FetchLimits, FetchOutcome } from "../../types.js";
+import type {
+  DesearchBilling,
+  FetchIncompleteReason,
+  FetchLimits,
+  FetchOutcome,
+} from "../../types.js";
 import type { PostsFetcher } from "../postsFetcher.js";
 import { outcomeFromRetrievedPosts } from "../limitEnforcement.js";
-import { fetchHandlePages } from "./fetchHandlePages.js";
-import type { DesearchTransport } from "./desearchTransport.js";
+import { DesearchPaginationError, fetchHandlePages } from "./fetchHandlePages.js";
+import {
+  DesearchRetrievalError,
+  type DesearchTransport,
+} from "./desearchTransport.js";
+
+function withBilling(
+  outcome: FetchOutcome,
+  billing: DesearchBilling[],
+): FetchOutcome {
+  if (billing.length === 0) return outcome;
+  return { ...outcome, billing };
+}
 
 export class DesearchNotConfiguredError extends Error {
   constructor(message: string) {
@@ -97,28 +113,52 @@ export class DesearchPostsFetcher implements PostsFetcher {
 
       const maxPostsThisHandle = Math.min(limits.maxPostsPerPerson, remainingTotal);
 
-      const pageResult = await fetchHandlePages(
-        handle,
-        this.credential,
-        this.transport,
-        {
-          maxPostsThisHandle,
-          remainingTotalCap: remainingTotal,
-          requestBudgetRemaining,
-        },
-      );
+      let pageResult: Awaited<ReturnType<typeof fetchHandlePages>>;
+      try {
+        pageResult = await fetchHandlePages(
+          handle,
+          this.credential,
+          this.transport,
+          {
+            maxPostsThisHandle,
+            remainingTotalCap: remainingTotal,
+            requestBudgetRemaining,
+          },
+        );
+      } catch (err) {
+        const prior = outcomes.flatMap((outcome) => outcome.billing ?? []);
+        if (err instanceof DesearchRetrievalError) {
+          throw new DesearchRetrievalError(err.message, {
+            category: err.category,
+            status: err.status,
+            billing: [...prior, ...err.billing],
+          });
+        }
+        if (err instanceof DesearchPaginationError) {
+          throw new DesearchPaginationError(err.message, [...prior, ...err.billing]);
+        }
+        throw new DesearchRetrievalError("Retrieval failed unexpectedly.", {
+          category: "network",
+          billing: prior,
+        });
+      }
 
       requestBudgetRemaining -= pageResult.requestsUsed;
 
       if (pageResult.posts.length === 0) {
         if (pageResult.apiHasMorePages || pageResult.stoppedDueToRequestBudget) {
-          outcomes.push({
-            status: "incomplete",
-            handle,
-            reason: "desearch_request_budget_exhausted",
-          });
+          outcomes.push(
+            withBilling(
+              {
+                status: "incomplete",
+                handle,
+                reason: "desearch_request_budget_exhausted",
+              },
+              pageResult.billing,
+            ),
+          );
         } else {
-          outcomes.push({ status: "empty", handle });
+          outcomes.push(withBilling({ status: "empty", handle }, pageResult.billing));
         }
         continue;
       }
@@ -142,13 +182,18 @@ export class DesearchPostsFetcher implements PostsFetcher {
         } else {
           incompleteReason = "total_post_limit_reached";
         }
-        outcomes.push({
-          ...outcome,
-          retrievalComplete: false,
-          incompleteReason,
-        });
+        outcomes.push(
+          withBilling(
+            {
+              ...outcome,
+              retrievalComplete: false,
+              incompleteReason,
+            },
+            pageResult.billing,
+          ),
+        );
       } else {
-        outcomes.push(outcome);
+        outcomes.push(withBilling(outcome, pageResult.billing));
       }
 
       remainingTotal = nextRemaining;

@@ -1,8 +1,14 @@
 import { cliPostsProvider, loadPostsProviderConfig } from "../config/postsProvider.js";
-import { loadDesearchSettings } from "../config/desearchSettings.js";
+import {
+  loadDesearchRequestBudget,
+  loadDesearchSettings,
+  resolveDesearchApiKey,
+  type DesearchSettings,
+} from "../config/desearchSettings.js";
 import type { PostsFetcher } from "./postsFetcher.js";
 import { MockPostsFetcher } from "./postsFetcher.js";
 import {
+  DesearchNotConfiguredError,
   DesearchPostsFetcher,
 } from "./desearch/desearchPostsFetcher.js";
 import { createHttpDesearchTransport } from "./desearch/httpTransport.js";
@@ -14,27 +20,53 @@ export function createCliPostsFetcher(): PostsFetcher {
   return new MockPostsFetcher();
 }
 
-/**
- * Resolve fetcher from env. Live Desearch uses HTTPS only when fully eligible;
- * otherwise returns mock fixtures. Not used by the CLI default path.
- */
-export function createPostsFetcherFromEnv(options?: {
+export interface CreatePostsFetcherOptions {
   transport?: DesearchTransport;
-}): PostsFetcher {
-  const { provider } = loadPostsProviderConfig();
+  env?: NodeJS.ProcessEnv;
+  /**
+   * "mock" is the historical fallback when Desearch is selected but incomplete.
+   * "throw" is the shared report path: that selection does not become fixture posts.
+   */
+  ineligibleDesearch?: "mock" | "throw";
+}
+
+function createEligibleDesearchFetcher(
+  env: NodeJS.ProcessEnv,
+  settings: DesearchSettings,
+  transport: DesearchTransport | undefined,
+): DesearchPostsFetcher {
+  return new DesearchPostsFetcher({
+    transport: transport ?? createHttpDesearchTransport(),
+    requireLiveEligible: true,
+    settings,
+    credential: resolveDesearchApiKey(env),
+    maxRequestsPerRun: loadDesearchRequestBudget(env),
+  });
+}
+
+/**
+ * Resolve a fetcher from env and an optional transport.
+ * The default incomplete-Desearch behavior returns mock fixtures.
+ * Pass ineligibleDesearch "throw" when an explicit Desearch selection must fail closed.
+ */
+export function createPostsFetcherFromEnv(
+  options?: CreatePostsFetcherOptions,
+): PostsFetcher {
+  const env = options?.env ?? process.env;
+  const { provider } = loadPostsProviderConfig(env);
   if (provider === "mock") {
     return new MockPostsFetcher();
   }
 
-  const settings = loadDesearchSettings();
+  const settings = loadDesearchSettings(env);
   if (!settings.liveEligible) {
+    if (options?.ineligibleDesearch === "throw") {
+      throw new DesearchNotConfiguredError(
+        "Desearch was selected but is not fully enabled. Set POSTS_PROVIDER=desearch, DESEARCH_LIVE_ENABLED=true, and a real DESEARCH_API_KEY.",
+      );
+    }
     return new MockPostsFetcher();
   }
 
-  const transport = options?.transport ?? createHttpDesearchTransport();
-  return new DesearchPostsFetcher({
-    transport,
-    requireLiveEligible: true,
-    settings,
-  });
+  return createEligibleDesearchFetcher(env, settings, options?.transport);
 }

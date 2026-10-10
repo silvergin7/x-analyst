@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { parseCliArgs } from "./cliArgs.js";
-import { formatFetchIssue, formatFullReport } from "./format/report.js";
-import { runReport } from "./runReport.js";
+import { utcReferenceDate } from "./config/llmSettings.js";
+import { formatFetchIssue, formatFullReport, formatReportFailure } from "./format/report.js";
+import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 
 async function main(): Promise<void> {
   const options = parseCliArgs(process.argv.slice(2));
@@ -19,20 +20,37 @@ async function main(): Promise<void> {
   );
 
   try {
-    const { fetchOutcomes, reports } = await runReport(options.handles, {
-      text: options.question,
-    });
+    const referenceDate = options.asOf ?? utcReferenceDate();
+    const result = await runReport(
+      options.handles,
+      { text: options.question },
+      { referenceDate, fresh: options.fresh },
+    );
 
     const fetchNotes = [
       ...preNotes,
-      ...fetchOutcomes.map(formatFetchIssue).filter((l) => l.length > 0),
+      ...result.fetchOutcomes
+        .map((outcome) => formatFetchIssue(outcome, result.postsSource))
+        .filter((line) => line.length > 0),
     ];
 
-    const output = formatFullReport(options.question, fetchNotes, reports);
+    const output = formatFullReport(options.question, fetchNotes, result.reports, {
+      postsSource: result.postsSource,
+      analysisSource: result.analysisSource,
+      referenceDate: result.referenceDate,
+      fetchedAt: result.fetchedAt,
+      reused: result.reused,
+      billing: result.billing,
+    });
     process.stdout.write(output);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Error: ${message}\n`);
+    if (err instanceof ReportConfigError) {
+      process.stderr.write(`${err.message}\n`);
+    } else if (err instanceof ReportRunError) {
+      process.stderr.write(formatReportFailure(err.message, err.details));
+    } else {
+      process.stderr.write("Analysis failed unexpectedly\n");
+    }
     process.exitCode = 1;
   }
 }

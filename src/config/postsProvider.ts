@@ -20,7 +20,7 @@ export function loadPostsProviderConfig(
   return { provider: DEFAULT_PROVIDER };
 }
 
-/** CLI and default runtime always use mock until live wiring is explicitly approved. */
+/** Forced mock for callers that must not read POSTS_PROVIDER. */
 export function cliPostsProvider(): PostsProviderName {
   return "mock";
 }

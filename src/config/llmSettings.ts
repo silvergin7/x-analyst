@@ -36,7 +36,10 @@ export const LLM_FRAMING_TOKENS_PER_MESSAGE = 32;
 
 export const LLM_API_KEY_PLACEHOLDER = "replace_me_only_when_you_are_ready";
 
-/** Fallback reference date for analyzer unit tests that do not pass one. */
+/**
+ * Fallback reference date for fixture-source analyzer construction that omits one.
+ * Live Desearch runs pass the UTC date of that invocation instead.
+ */
 export const DEFAULT_ANALYSIS_REFERENCE_DATE = "2026-10-09";
 
 const REFERENCE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;

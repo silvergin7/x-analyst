@@ -1,12 +1,19 @@
-import type { Post } from "../../types.js";
+import type { DesearchBilling, Post } from "../../types.js";
 import { buildTwitterUserPostsRequest } from "./buildRequest.js";
-import { desearchErrorMessage, type DesearchTransport } from "./desearchTransport.js";
+import {
+  DesearchRetrievalError,
+  desearchErrorMessage,
+  type DesearchTransport,
+} from "./desearchTransport.js";
 import { parseTwitterUserPostsResponse } from "./parseAssumedResponse.js";
 
 export class DesearchPaginationError extends Error {
-  constructor(message: string) {
+  readonly billing: DesearchBilling[];
+
+  constructor(message: string, billing: DesearchBilling[] = []) {
     super(message);
     this.name = "DesearchPaginationError";
+    this.billing = billing;
   }
 }
 
@@ -19,6 +26,7 @@ export interface FetchHandlePagesResult {
   stoppedDueToCap: boolean;
   stoppedDueToRequestBudget: boolean;
   requestsUsed: number;
+  billing: DesearchBilling[];
 }
 
 function advanceCursor(
@@ -54,6 +62,7 @@ export async function fetchHandlePages(
   let lastResponseHasMorePages = false;
   let truncatedLastResponse = false;
   let requestsUsed = 0;
+  const billing: DesearchBilling[] = [];
   const seenCursors = new Set<string>();
 
   while (collected.length < options.maxPostsThisHandle) {
@@ -69,17 +78,38 @@ export async function fetchHandlePages(
     }
 
     const request = buildTwitterUserPostsRequest(username, apiKey, cursor);
-    const response = await transport.execute(request);
+    let response: Awaited<ReturnType<DesearchTransport["execute"]>>;
+    try {
+      response = await transport.execute(request);
+    } catch (err) {
+      if (err instanceof DesearchRetrievalError) {
+        throw new DesearchRetrievalError(err.message, {
+          category: err.category,
+          status: err.status,
+          billing: [...billing, ...err.billing],
+        });
+      }
+      throw new DesearchRetrievalError("Desearch HTTPS request failed.", {
+        category: "network",
+        billing,
+      });
+    }
     requestsUsed += 1;
+    if (response.billing) billing.push(response.billing);
 
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(desearchErrorMessage(response.status, response.body));
+      throw new DesearchRetrievalError(desearchErrorMessage(response.status), {
+        category: "http_status",
+        status: response.status,
+        billing,
+      });
     }
 
     const parsed = parseTwitterUserPostsResponse(username, response.body);
     if (!parsed.ok) {
-      throw new Error(
+      throw new DesearchRetrievalError(
         `Desearch response could not be parsed (${parsed.reason}).`,
+        { category: "parse", billing },
       );
     }
 
@@ -87,7 +117,7 @@ export async function fetchHandlePages(
 
     if (parsed.posts.length === 0) {
       if (parsed.hasMorePages && parsed.nextCursor) {
-        cursor = advanceCursor(parsed.nextCursor, seenCursors);
+        cursor = moveCursor(parsed.nextCursor);
         continue;
       }
       break;
@@ -118,7 +148,18 @@ export async function fetchHandlePages(
       break;
     }
 
-    cursor = advanceCursor(parsed.nextCursor, seenCursors);
+    cursor = moveCursor(parsed.nextCursor);
+  }
+
+  function moveCursor(nextCursor: string): string {
+    try {
+      return advanceCursor(nextCursor, seenCursors);
+    } catch (err) {
+      if (err instanceof DesearchPaginationError) {
+        throw new DesearchPaginationError(err.message, billing);
+      }
+      throw err;
+    }
   }
 
   const apiHasMorePages =
@@ -134,5 +175,6 @@ export async function fetchHandlePages(
     stoppedDueToCap,
     stoppedDueToRequestBudget,
     requestsUsed,
+    billing,
   };
 }

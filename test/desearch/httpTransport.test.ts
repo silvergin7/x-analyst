@@ -4,15 +4,22 @@ import type { IncomingMessage } from "node:http";
 import type { ClientRequest, RequestOptions } from "node:http";
 import { describe, it } from "node:test";
 import { buildTwitterUserPostsRequest } from "../../src/fetch/desearch/buildRequest.js";
+import { desearchErrorMessage } from "../../src/fetch/desearch/desearchTransport.js";
 import {
   createHttpDesearchTransport,
   HttpDesearchTransportConfigError,
+  readDesearchBilling,
   type HttpsRequestFn,
 } from "../../src/fetch/desearch/httpTransport.js";
 
-function mockResponse(statusCode: number, body: string): IncomingMessage {
+function mockResponse(
+  statusCode: number,
+  body: string,
+  headers: IncomingMessage["headers"] = {},
+): IncomingMessage {
   const res = new EventEmitter() as IncomingMessage;
   res.statusCode = statusCode;
+  res.headers = headers;
   setImmediate(() => {
     if (body.length > 0) res.emit("data", Buffer.from(body, "utf8"));
     res.emit("end");
@@ -141,23 +148,31 @@ describe("createHttpDesearchTransport", () => {
   });
 
   it("rejects on network errors", async () => {
-    const transport = createHttpDesearchTransport({
+    const fakeKey = "sk-live-FAKEKEY-SHOULD-NOT-PRINT";
+    const leaking = createHttpDesearchTransport({
       timeoutMs: 500,
       httpsRequest: mockHttps(() => {
         const req = new EventEmitter() as ClientRequest;
         req.setTimeout = () => req;
         req.destroy = () => req;
         req.end = () => {
-          req.emit("error", new Error("ECONNREFUSED"));
+          req.emit("error", new Error(`ECONNREFUSED Authorization: ${fakeKey}`));
           return req;
         };
         return req;
       }),
     });
     await assert.rejects(
-      () => transport.execute(buildTwitterUserPostsRequest("a", "key")),
-      /HTTPS request failed/,
+      () => leaking.execute(buildTwitterUserPostsRequest("a", "key")),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /HTTPS request failed/);
+        assert.equal(err.message.includes(fakeKey), false);
+        assert.equal(err.message.includes("ECONNREFUSED"), false);
+        return true;
+      },
     );
+    assert.equal(desearchErrorMessage(401), "Desearch request failed (HTTP 401).");
   });
 
   it("rejects malformed non-empty JSON bodies", async () => {
@@ -180,6 +195,35 @@ describe("createHttpDesearchTransport", () => {
         HttpDesearchTransportConfigError,
       );
     }
+  });
+
+  it("keeps Desearch billing headers and does not invent a missing cost", async () => {
+    const transport = createHttpDesearchTransport({
+      timeoutMs: 500,
+      httpsRequest: mockHttps((_opts, cb) =>
+        mockRequest(
+          mockResponse(200, JSON.stringify({ tweets: [] }), {
+            "x-desearch-cost-usd": "0.15",
+            "x-desearch-usage-count": "10",
+            "x-desearch-service": "twitter",
+            "x-desearch-currency": "USD",
+          }),
+          cb,
+        ),
+      ),
+    });
+    const result = await transport.execute(buildTwitterUserPostsRequest("bullmacro", "fake-key"));
+    assert.deepEqual(result.billing, {
+      costUsd: 0.15,
+      usageCount: 10,
+      service: "twitter",
+      currency: "USD",
+    });
+    assert.equal(
+      readDesearchBilling(undefined, { usage_count: 4, service: "twitter" })?.costUsd,
+      undefined,
+    );
+    assert.equal(readDesearchBilling(undefined, { usage_count: 4 })?.usageCount, 4);
   });
 
   it("uses default timeout when timeoutMs is undefined", () => {

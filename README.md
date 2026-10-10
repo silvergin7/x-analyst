@@ -48,7 +48,7 @@ MAX_POSTS_PER_PERSON=5 MAX_POSTS_TOTAL=12 npm run start
 
 When a cap stops a full fixture slice, the CLI reports **partial** retrieval (outlook from the posts that were kept) or **incomplete** retrieval (analyst not examined, no outlook line). Handles skipped because `MAX_POSTS_TOTAL` was already used do **not** get an `unclear` outlook.
 
-The CLI always uses `MockPostsFetcher`, regardless of environment variables.
+With the providers unset or set to `mock`, the CLI uses fixture posts and keyword rules. `--as-of YYYY-MM-DD` sets the analysis reference date for that invocation. When it is omitted, the CLI uses the UTC date of the invocation. `--fresh` fetches a new slice. Without `--fresh`, a matching slice already stored in this process is reused and is not fetched again.
 
 ## Local web preview
 
@@ -65,11 +65,11 @@ npm run dev:web
 - API: `http://127.0.0.1:3001` (`PORT` overrides the port)
 - Vite: `http://127.0.0.1:5173`, proxying `/api` to the API
 
-The page keeps a mock-mode banner and a check of `GET /api/meta`. It also has handles and question fields. The question starts as `What is each analyst's current market outlook?`. Submitting the form calls the existing `POST /api/analyze` and shows one card per returned report: handle, outlook, explanation, dates examined, post count, retrieval coverage, and evidence. Evidence URLs are labeled as fictional fixture links. Invalid, unknown, empty, and unexamined handles are separate status lines, with no outlook card.
+The page checks `GET /api/meta` and keeps a fixture banner while both sources are the mock defaults. It has handles, a question, and a “Fetch a new slice” control. The question starts as `What is each analyst's current market outlook?`. Submitting the form calls `POST /api/analyze`. One submission is sent at a time. The page shows one card per returned report: handle, outlook, explanation, dates examined, post count, retrieval coverage, analysis-input exclusions when present, provider usage when present, and evidence. Fixture evidence is labeled as a fictional fixture link. Retrieved evidence is labeled as a retrieved post link. The page also shows the reference date, whether the slice was reused, when it was fetched, and any Desearch billing fields that were actually returned. Invalid, unknown, empty, and unexamined handles are separate status lines, with no outlook card.
 
-The mock analyzer uses fixed keyword rules. Changing the question does not change the analysis.
+While analysis is the mock rules, changing the question does not change the analysis. Server startup and `GET /api/meta` do not call Desearch or Chutes.
 
-`POST /api/analyze` body: `{ "handles": "bullmacro,bearmacro", "question": "..." }`. It returns `{ mode, question, invalidHandles, fetchOutcomes, reports }`.
+`POST /api/analyze` body: `{ "handles": "bullmacro,bearmacro", "question": "..." }`. Add `"fresh": true` only when the new-slice control is checked. The response includes `mode`, `question`, `postsSource`, `analysisSource`, `referenceDate`, `fetchedAt`, `reused`, `billing`, `invalidHandles`, `fetchOutcomes`, and `reports`. The API reference date is the UTC date of that submission.
 
 ## Test and typecheck
 
@@ -82,31 +82,48 @@ npm run typecheck
 
 ## What is mocked on the default path
 
-| Piece | Current default | Later replacement |
+| Piece | Current default | When its own gates are fully on |
 |-------|-----------------|-------------------|
-| Post retrieval | `MockPostsFetcher` reads `src/fixtures/samplePosts.ts` | `DesearchPostsFetcher` behind `createPostsFetcherFromEnv()` |
-| Outlook analysis | `MockOutlookAnalyzer` keyword rules on the CLI, API, and web UI | Opt-in `LlmOutlookAnalyzer` via `npm run analyze:llm-fixture` |
-| Web UI | Form submits to `/api/analyze` and shows mock report cards | Live Desearch posts and an LLM outlook |
+| Post retrieval | `MockPostsFetcher` reads `src/fixtures/samplePosts.ts` | `DesearchPostsFetcher` on the shared CLI, API, and web path |
+| Outlook analysis | `MockOutlookAnalyzer` keyword rules | `LlmOutlookAnalyzer` on that same path |
+| Web UI | Form submits to `/api/analyze` and shows fixture report cards | The same form, with source labels for the gates that are on |
 
 Fixture URLs use `https://fixture.x-analyst.local/...`. They are not live X links. Fixture handles: `bullmacro`, `bearmacro`, `unclearmacro`, `emptymacro` (empty list).
 
-## Live Desearch (opt-in code, unused by CLI and web)
+## Shared report path
 
-`createPostsFetcherFromEnv()` can return a live fetcher only when **all** of the following are set (see `.env.example`):
+`npm start`, `POST /api/analyze`, and the web form use one report runner. Each provider has its own gate. Unset or `mock` stays on fixtures and keyword rules. Selecting Desearch without a complete live configuration stops before any request, and so does selecting Chutes without a complete live configuration. The two can be on together or one at a time.
+
+Desearch runs only when all of the following are set (see `.env.example`):
 
 - `POSTS_PROVIDER=desearch`
 - `DESEARCH_LIVE_ENABLED=true`
 - `DESEARCH_API_KEY` set to a real key (not the placeholder `replace_me_only_when_you_are_ready`)
 
-If any gate fails, that factory returns mock fixtures. Live calls use **`GET https://api.desearch.ai/twitter/user/posts`**. The `Authorization` header is the raw API key (no `Bearer` prefix).
+Chutes runs only when all of the following are set:
 
-**Caps are not dollar limits.** `MAX_POSTS_PER_PERSON` and `MAX_POSTS_TOTAL` limit posts **kept for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP requests per run** (default 5). A response can still contain an undocumented number of billable posts. Confirm current rates in the Desearch console before any live call. Copy `.env.example` to a local `.env` only when you intend to use live services. Do not commit `.env`.
+- `ANALYSIS_PROVIDER=chutes`
+- `LLM_LIVE_ENABLED=true`
+- `CHUTES_API_KEY` set to a real key (not the placeholder `replace_me_only_when_you_are_ready`)
+- `LLM_MODEL=Qwen/Qwen3-32B-TEE`
+
+`createPostsFetcherFromEnv()` returns mock fixtures when Desearch is selected but incomplete. The shared runner calls that factory with the run's env and transport, and asks it to throw for that incomplete selection, so the eligible fetcher is built in one place and an explicit incomplete selection does not become fixture posts.
+
+Live retrieval uses **`GET https://api.desearch.ai/twitter/user/posts`**. The `Authorization` header is the raw API key (no `Bearer` prefix). The question and the selected configuration are checked before that call. A question longer than 500 characters is rejected before a paid fetch when Chutes will run. It is not shortened.
+
+A successful slice is kept in memory for the life of the process. The cache holds one entry, the latest key and slice. Storing a different key replaces it. The key is the post source, the ordered handles, `MAX_POSTS_PER_PERSON`, `MAX_POSTS_TOTAL`, and `DESEARCH_MAX_REQUESTS_PER_RUN`. The report says when the slice was fetched and whether it was reused. Reused data is not described as a new fetch. `--fresh`, or `"fresh": true` from the form, fetches again. Nothing refreshes the slice on its own. A repeated analysis can still call Chutes. The cache is not a database and does not survive a restart. A failed retrieval is not stored.
+
+The analysis reference date is the CLI `--as-of` value, or the UTC date of that CLI invocation when the flag is omitted. The API and web form use the UTC date of the submission. Fixture-only prompts say the posts are a synthetic fixture test. A Desearch run does not use that wording or a fixed test date. Fixture evidence keeps the fictional-link label. Retrieved evidence does not.
+
+The Desearch parser marks a quote from `is_quote_tweet` and does not set analyst commentary. This path does not guess commentary from the tweet text or a quote object. A quote without commentary is excluded from model input. If nothing eligible remains, the outlook is local `unclear` and Chutes is not called.
+
+When Desearch returns `X-Desearch-Cost-Usd`, `X-Desearch-Usage-Count`, `X-Desearch-Service`, `X-Desearch-Currency`, or the same values on the JSON body, the report keeps those fields. A missing cost is left missing. A failed run stays failed: it does not retry and it does not present a complete report. Billing already returned, and token usage from model calls already made, are shown with that failure. Desearch failures report an HTTP status or a fixed category. They do not include the response body or the underlying exception text. Confirm the current `GET /twitter/user/posts` price and the account credits in the Desearch console before any live call. A live Desearch-to-Chutes run is a separate approval and has not been made here.
+
+**Caps are not dollar limits.** `MAX_POSTS_PER_PERSON` and `MAX_POSTS_TOTAL` limit posts **kept for analysis**. `DESEARCH_MAX_REQUESTS_PER_RUN` limits **HTTP requests per run** (default 5). A response can still contain an undocumented number of billable posts. Copy `.env.example` to a local `.env` only when you intend to use live services. Do not commit `.env`.
 
 ## Opt-in Chutes fixture check
 
-`npm start`, the API, and the web UI still construct `MockOutlookAnalyzer` and do not read the Chutes flags. `PersonOutlookReport.analysisSource` on those paths stays `"mock"`.
-
-`npm run analyze:llm-fixture -- <handle>` reads one fixture handle through `MockPostsFetcher`. It calls Chutes only when all of the following are true (see `.env.example`):
+`npm run analyze:llm-fixture -- <handle>` still reads one fixture handle through `MockPostsFetcher`. It is separate from the shared path. It calls Chutes only when all of the following are true (see `.env.example`):
 
 - `ANALYSIS_PROVIDER=chutes`
 - `LLM_LIVE_ENABLED=true`
@@ -119,10 +136,11 @@ The question is limited to 500 characters. At most 10 eligible posts are sent, a
 
 Optional `--as-of YYYY-MM-DD` sets the analysis reference date used for “current”. When omitted, the command uses the UTC date of the run. The output labels the run as a synthetic fixture test, not current real-world research.
 
-Do not run this command until a separate live-call approval. Automated tests mock the HTTP response and do not call Chutes.
+Automated tests mock the HTTP response and do not call Chutes. Do not run this command again without a separate approval.
 
 ## Limitations
 
 - Roster is a manual handle list. No X Lists, OAuth, accounts, database, or deployment.
-- Mock analysis is keyword rules, not model inference. Do not treat the report as verified market research.
+- Mock analysis is keyword rules, not model inference. Do not treat a mock or model report as verified market research.
 - Retrieved posts are untrusted data. Reports keep author, timestamp, post id, URL, and post kind on every citation.
+- Fetch reuse lasts only as long as the process and only for the same slice key. It does not skip a later Chutes call.

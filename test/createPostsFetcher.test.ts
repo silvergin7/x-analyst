@@ -4,7 +4,10 @@ import {
   createCliPostsFetcher,
   createPostsFetcherFromEnv,
 } from "../src/fetch/createPostsFetcher.js";
-import { DesearchPostsFetcher } from "../src/fetch/desearch/desearchPostsFetcher.js";
+import {
+  DesearchNotConfiguredError,
+  DesearchPostsFetcher,
+} from "../src/fetch/desearch/desearchPostsFetcher.js";
 import { MockPostsFetcher } from "../src/fetch/postsFetcher.js";
 
 describe("createCliPostsFetcher", () => {
@@ -69,6 +72,50 @@ describe("createPostsFetcherFromEnv", () => {
       transport: { execute: async () => ({ status: 200, body: {} }) },
     });
     assert.ok(fetcher instanceof DesearchPostsFetcher);
+  });
+
+  it("throws for an explicit incomplete Desearch selection without calling transport", () => {
+    let calls = 0;
+    assert.throws(
+      () =>
+        createPostsFetcherFromEnv({
+          env: { POSTS_PROVIDER: "desearch" },
+          ineligibleDesearch: "throw",
+          transport: {
+            async execute() {
+              calls += 1;
+              return { status: 200, body: {} };
+            },
+          },
+        }),
+      DesearchNotConfiguredError,
+    );
+    assert.equal(calls, 0);
+  });
+
+  it("builds the eligible fetcher from the passed env and transport", async () => {
+    process.env.DESEARCH_API_KEY = "process-env-key";
+    let authorization = "";
+    const fetcher = createPostsFetcherFromEnv({
+      env: {
+        POSTS_PROVIDER: "desearch",
+        DESEARCH_LIVE_ENABLED: "true",
+        DESEARCH_API_KEY: "env-arg-key",
+        DESEARCH_MAX_REQUESTS_PER_RUN: "1",
+      },
+      transport: {
+        async execute(request) {
+          authorization = request.headers.Authorization ?? "";
+          return { status: 200, body: { tweets: [] } };
+        },
+      },
+    });
+    assert.ok(fetcher instanceof DesearchPostsFetcher);
+    await fetcher.fetchForHandles(["bullmacro"], {
+      maxPostsPerPerson: 1,
+      maxPostsTotal: 1,
+    });
+    assert.equal(authorization, "env-arg-key");
   });
 
   it("uses default HTTPS transport factory when live-eligible and no override", () => {

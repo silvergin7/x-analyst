@@ -10,6 +10,7 @@ import type {
   MarketOutlook,
   PersonOutlookReport,
   Post,
+  PostSource,
   ProviderTokenUsage,
   RetrievalContext,
 } from "../types.js";
@@ -158,19 +159,29 @@ function evidenceFromSent(
 }
 
 /**
- * Chutes-backed outlook analyzer. The default CLI, API, and web paths do not construct it.
+ * Chutes-backed outlook analyzer.
+ * Fixture-source construction may omit the reference date.
+ * A Desearch run must pass the date for that invocation.
  */
 export class LlmOutlookAnalyzer implements OutlookAnalyzer {
   private readonly referenceDate: string;
+  private readonly postSource: PostSource;
 
   constructor(
     config: LlmRuntimeConfig,
     transport: ChutesTransport,
-    referenceDate: string = DEFAULT_ANALYSIS_REFERENCE_DATE,
+    referenceDate?: string,
+    postSource: PostSource = "fixtures",
   ) {
     this.config = config;
     this.transport = transport;
-    const parsed = parseAnalysisReferenceDate(referenceDate);
+    this.postSource = postSource;
+    if (postSource === "desearch" && referenceDate === undefined) {
+      throw new LlmOutputError("Live analysis requires an explicit reference date");
+    }
+    const parsed = parseAnalysisReferenceDate(
+      referenceDate ?? DEFAULT_ANALYSIS_REFERENCE_DATE,
+    );
     if (!parsed) {
       throw new LlmOutputError("Analysis reference date must be YYYY-MM-DD");
     }
@@ -211,7 +222,12 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       };
     }
 
-    const messages = buildChatMessages(question.text, plan.sent, this.referenceDate);
+    const messages = buildChatMessages(
+      question.text,
+      plan.sent,
+      this.referenceDate,
+      this.postSource,
+    );
     const completion = await requestChutesCompletion(
       this.config,
       messages,

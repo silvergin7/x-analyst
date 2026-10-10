@@ -1,10 +1,15 @@
 import { DEFAULT_HANDLES, DEFAULT_QUESTION } from "./config.js";
+import { parseAnalysisReferenceDate } from "./config/llmSettings.js";
 import { parseHandleList } from "./validation/handles.js";
 
 export interface CliOptions {
   handles: string[];
   invalidHandles: { raw: string; reason: string }[];
   question: string;
+  /** UTC date for this invocation. Omitted when --as-of was not passed. */
+  asOf?: string;
+  /** True when the user asked to fetch a new slice. */
+  fresh: boolean;
   /** Flags passed without a required value (e.g. `--handles` at end of argv). */
   flagErrors: string[];
 }
@@ -18,6 +23,8 @@ function nextArgLooksLikeValue(argv: string[], index: number): boolean {
 export function parseCliArgs(argv: string[]): CliOptions {
   let handlesRaw: string | undefined;
   let question: string | undefined;
+  let asOf: string | undefined;
+  let fresh = false;
   let handlesFlagSeen = false;
   let questionFlagSeen = false;
   const flagErrors: string[] = [];
@@ -74,6 +81,26 @@ export function parseCliArgs(argv: string[]): CliOptions {
       } else {
         question = value;
       }
+      continue;
+    }
+    if (arg === "--fresh") {
+      fresh = true;
+      continue;
+    }
+    if (arg === "--as-of" || arg.startsWith("--as-of=")) {
+      const value =
+        arg === "--as-of"
+          ? nextArgLooksLikeValue(argv, i)
+            ? argv[++i]!
+            : ""
+          : arg.slice("--as-of=".length);
+      if (value === "") {
+        flagErrors.push("Missing value for --as-of (expected YYYY-MM-DD)");
+      } else if (!parseAnalysisReferenceDate(value)) {
+        flagErrors.push("--as-of must be a real UTC date YYYY-MM-DD");
+      } else {
+        asOf = value;
+      }
     }
   }
 
@@ -90,6 +117,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
     handles: parsed.valid,
     invalidHandles: parsed.invalid,
     question: useDefaultQuestion ? DEFAULT_QUESTION : (question ?? ""),
+    asOf,
+    fresh,
     flagErrors,
   };
 }

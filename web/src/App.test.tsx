@@ -62,13 +62,21 @@ function successBody(
   reports: unknown[],
   fetchOutcomes: unknown[] = [],
   invalidHandles: unknown[] = [],
+  extras: Record<string, unknown> = {},
 ) {
   return {
     mode: "mock",
     question: DEFAULT_QUESTION,
+    postsSource: "fixtures",
+    analysisSource: "mock-rules",
+    referenceDate: "2026-10-09",
+    fetchedAt: "2026-10-09T12:00:00.000Z",
+    reused: false,
+    billing: [],
     invalidHandles,
     fetchOutcomes,
     reports,
+    ...extras,
   };
 }
 
@@ -372,5 +380,105 @@ describe("mock analyze form", () => {
     );
     expect(screen.queryByRole("article")).toBeNull();
     expect(screen.queryByText(/bad handle/)).toBeNull();
+  });
+
+  it("labels retrieved posts without the fixture warning and shows reuse", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    installFetch(() => {
+      calls += 1;
+      return jsonResponse(
+        200,
+        successBody(
+          [
+            {
+              ...evidenceReport,
+              evidence: [
+                {
+                  ...evidenceReport.evidence[0],
+                  url: "https://x.com/example/status/1",
+                },
+              ],
+              analysisInput: [
+                {
+                  postId: "b3",
+                  disposition: "excluded",
+                  reason: "quote_without_analyst_commentary",
+                  originalChars: 0,
+                  sentChars: 0,
+                },
+              ],
+              providerUsage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
+              modelInvoked: true,
+            },
+          ],
+          [],
+          [],
+          {
+            postsSource: "desearch",
+            analysisSource: "chutes",
+            reused: calls > 1,
+            billing: [{ usageCount: 10 }],
+          },
+        ),
+      );
+    });
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analyze" }));
+    const card = await screen.findByRole("article", { name: "@bullmacro" });
+    expect(card.textContent).toContain("Retrieved post link");
+    expect(card.textContent).not.toContain("Fictional fixture link");
+    expect(card.textContent).toContain("quote_without_analyst_commentary");
+    expect(card.textContent).toContain("prompt_tokens=5");
+    expect(screen.getByText(/Fetched a new slice/)).toBeTruthy();
+    expect(screen.getByText(/Desearch usage count 10/)).toBeTruthy();
+    expect(screen.queryByText(/Desearch reported cost/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Analyze" }));
+    expect(await screen.findByText(/Reused an earlier slice/)).toBeTruthy();
+  });
+
+  it("sends fresh only when the new-slice control is checked", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetch(() => jsonResponse(200, successBody([evidenceReport])));
+    render(<App />);
+    await user.click(await screen.findByRole("checkbox", { name: "Fetch a new slice" }));
+    await user.click(screen.getByRole("button", { name: "Analyze" }));
+    await screen.findByRole("article", { name: "@bullmacro" });
+    const analyzeCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/api/analyze"),
+    );
+    expect(JSON.parse(String(analyzeCalls[0]?.[1]?.body))).toMatchObject({ fresh: true });
+  });
+
+  it("shows billing and every model usage on a failed run without an outlook card", async () => {
+    const user = userEvent.setup();
+    installFetch(() =>
+      jsonResponse(502, {
+        error: "Chutes refused the request",
+        postsSource: "desearch",
+        analysisSource: "chutes",
+        referenceDate: "2026-11-02",
+        fetchedAt: "2026-11-02T12:00:00.000Z",
+        reused: false,
+        sliceStored: true,
+        billing: [{ usageCount: 3 }, { usageCount: 4 }],
+        providerUsages: [
+          { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+          { promptTokens: 9, completionTokens: 1, totalTokens: 10 },
+        ],
+      }),
+    );
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Analyze" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Chutes refused the request");
+    expect(screen.getByText("The run failed. No complete report was produced.")).toBeTruthy();
+    expect(screen.getByText(/prompt_tokens=11/)).toBeTruthy();
+    expect(screen.getByText(/prompt_tokens=9/)).toBeTruthy();
+    expect(screen.getByText(/Desearch usage count 3/)).toBeTruthy();
+    expect(screen.getByText(/Desearch usage count 4/)).toBeTruthy();
+    expect(screen.getByText(/Fetched a new slice/)).toBeTruthy();
+    expect(screen.queryByRole("article")).toBeNull();
   });
 });

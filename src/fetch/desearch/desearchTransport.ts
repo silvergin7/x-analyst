@@ -1,21 +1,46 @@
+import type { DesearchBilling } from "../../types.js";
 import type { DesearchPostsRequest } from "./buildRequest.js";
 
-/** Injected transport — tests provide a mock; production wiring adds HTTP later. */
+/** Injected transport — tests provide a mock; production wiring uses HTTPS. */
 export interface DesearchTransport {
   execute(request: DesearchPostsRequest): Promise<{
     status: number;
     body: unknown;
+    billing?: DesearchBilling;
   }>;
 }
 
-/** Sanitize external error text — never echo secrets; treat as untrusted. */
-export function desearchErrorMessage(status: number, body: unknown): string {
-  let snippet = "";
-  if (typeof body === "string") {
-    snippet = body.slice(0, 120);
-  } else if (body !== null && typeof body === "object" && "message" in body) {
-    const msg = (body as { message: unknown }).message;
-    if (typeof msg === "string") snippet = msg.slice(0, 120);
+export type DesearchFailureCategory =
+  | "http_status"
+  | "timeout"
+  | "network"
+  | "invalid_json"
+  | "parse";
+
+/** Retrieval stopped after one or more responses, or before a usable body. */
+export class DesearchRetrievalError extends Error {
+  readonly category: DesearchFailureCategory;
+  readonly status?: number;
+  readonly billing: DesearchBilling[];
+
+  constructor(
+    message: string,
+    details: {
+      category: DesearchFailureCategory;
+      status?: number;
+      billing?: DesearchBilling[];
+    },
+  ) {
+    super(message);
+    this.name = "DesearchRetrievalError";
+    this.category = details.category;
+    this.status = details.status;
+    this.billing = details.billing ?? [];
   }
-  return `Desearch request failed (HTTP ${status}). External message (untrusted): ${snippet || "none"}`;
+}
+
+/** HTTP status only. Provider body text is omitted. */
+export function desearchErrorMessage(status: number): string {
+  const code = Number.isInteger(status) ? status : 0;
+  return `Desearch request failed (HTTP ${code}).`;
 }

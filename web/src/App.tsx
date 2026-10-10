@@ -2,12 +2,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { DEFAULT_HANDLES, DEFAULT_QUESTION } from "../../src/config";
 
 interface MetaResponse {
-  mode: "mock";
-  demo: true;
+  mode: "mock" | "live";
+  demo: boolean;
   description: string;
-  postsSource: string;
-  analysisSource: string;
-  liveApiEnabled: false;
+  postsSource: "fixtures" | "desearch";
+  analysisSource: "mock-rules" | "chutes";
+  liveApiEnabled: boolean;
 }
 
 type MetaState =
@@ -27,6 +27,27 @@ interface EvidenceItem {
   kind: string;
 }
 
+interface AnalysisInputItem {
+  postId: string;
+  disposition: string;
+  reason: string;
+  originalChars: number;
+  sentChars: number;
+}
+
+interface ProviderUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+interface BillingItem {
+  costUsd?: number;
+  usageCount?: number;
+  service?: string;
+  currency?: string;
+}
+
 interface OutlookReport {
   handle: string;
   outlook: string;
@@ -36,6 +57,9 @@ interface OutlookReport {
   retrievalComplete: boolean;
   retrievalIncompleteReason?: string;
   evidence: EvidenceItem[];
+  analysisInput?: AnalysisInputItem[];
+  providerUsage?: ProviderUsage | null;
+  modelInvoked?: boolean;
 }
 
 type FetchOutcome =
@@ -46,6 +70,12 @@ type FetchOutcome =
   | { status: "empty"; handle: string };
 
 interface AnalyzeSuccess {
+  postsSource: "fixtures" | "desearch";
+  analysisSource: "mock-rules" | "chutes";
+  referenceDate: string;
+  fetchedAt: string;
+  reused: boolean;
+  billing: BillingItem[];
   invalidHandles: InvalidHandle[];
   fetchOutcomes: FetchOutcome[];
   reports: OutlookReport[];
@@ -59,7 +89,16 @@ interface StatusLine {
 type RunState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "error"; message: string; invalidHandles: InvalidHandle[] }
+  | {
+      status: "error";
+      message: string;
+      invalidHandles: InvalidHandle[];
+      providerUsages?: ProviderUsage[];
+      billing?: BillingItem[];
+      fetchedAt?: string;
+      reused?: boolean;
+      sliceStored?: boolean;
+    }
   | { status: "ok"; result: AnalyzeSuccess };
 
 const OUTLOOKS = new Set(["bullish", "bearish", "cautious", "unclear"]);
@@ -75,6 +114,95 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function readAnalysisInput(value: unknown): AnalysisInputItem[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  const records: AnalysisInputItem[] = [];
+  for (const item of value) {
+    if (
+      !isRecord(item) ||
+      !isNonEmptyString(item.postId) ||
+      !isNonEmptyString(item.disposition) ||
+      typeof item.reason !== "string" ||
+      !isCount(item.originalChars) ||
+      !isCount(item.sentChars)
+    ) {
+      return null;
+    }
+    records.push({
+      postId: item.postId,
+      disposition: item.disposition,
+      reason: item.reason,
+      originalChars: item.originalChars,
+      sentChars: item.sentChars,
+    });
+  }
+  return records;
+}
+
+function readProviderUsage(value: unknown): ProviderUsage | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (
+    !isRecord(value) ||
+    !isCount(value.promptTokens) ||
+    !isCount(value.completionTokens) ||
+    !isCount(value.totalTokens)
+  ) {
+    return undefined;
+  }
+  return {
+    promptTokens: value.promptTokens,
+    completionTokens: value.completionTokens,
+    totalTokens: value.totalTokens,
+  };
+}
+
+function readBilling(value: unknown): BillingItem[] | null {
+  if (!Array.isArray(value)) return null;
+  const billing: BillingItem[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) return null;
+    const entry: BillingItem = {};
+    if (item.costUsd !== undefined) {
+      if (typeof item.costUsd !== "number" || !Number.isFinite(item.costUsd)) return null;
+      entry.costUsd = item.costUsd;
+    }
+    if (item.usageCount !== undefined) {
+      if (!isCount(item.usageCount)) return null;
+      entry.usageCount = item.usageCount;
+    }
+    if (item.service !== undefined) {
+      if (typeof item.service !== "string") return null;
+      entry.service = item.service;
+    }
+    if (item.currency !== undefined) {
+      if (typeof item.currency !== "string") return null;
+      entry.currency = item.currency;
+    }
+    billing.push(entry);
+  }
+  return billing;
+}
+
+function readProviderUsages(value: unknown): ProviderUsage[] {
+  if (!Array.isArray(value)) return [];
+  const usages: ProviderUsage[] = [];
+  for (const item of value) {
+    const usage = readProviderUsage(item);
+    if (usage) usages.push(usage);
+  }
+  return usages;
+}
+
+function readSourcePair(
+  value: Record<string, unknown>,
+): { postsSource: "fixtures" | "desearch"; analysisSource: "mock-rules" | "chutes" } | null {
+  if (value.postsSource !== "fixtures" && value.postsSource !== "desearch") return null;
+  if (value.analysisSource !== "mock-rules" && value.analysisSource !== "chutes") return null;
+  return { postsSource: value.postsSource, analysisSource: value.analysisSource };
 }
 
 function readInvalidHandles(value: unknown): InvalidHandle[] | null {
@@ -138,6 +266,12 @@ function readReport(value: unknown): OutlookReport | null {
   if (dateRangeExamined === undefined) return null;
   const evidence = readEvidence(value.evidence);
   if (!evidence) return null;
+  const analysisInput = readAnalysisInput(value.analysisInput);
+  if (analysisInput === null) return null;
+  const providerUsage = readProviderUsage(value.providerUsage);
+  if (value.providerUsage !== undefined && value.providerUsage !== null && !providerUsage) {
+    return null;
+  }
   return {
     handle: value.handle,
     outlook: value.outlook,
@@ -147,6 +281,9 @@ function readReport(value: unknown): OutlookReport | null {
     retrievalComplete: value.retrievalComplete,
     retrievalIncompleteReason: value.retrievalIncompleteReason,
     evidence,
+    analysisInput,
+    providerUsage,
+    modelInvoked: typeof value.modelInvoked === "boolean" ? value.modelInvoked : undefined,
   };
 }
 
@@ -167,6 +304,12 @@ function readFetchOutcome(value: unknown): FetchOutcome | null {
 function readAnalyzeSuccess(value: unknown): AnalyzeSuccess | null {
   if (!isRecord(value)) return null;
   if (!Array.isArray(value.fetchOutcomes) || !Array.isArray(value.reports)) return null;
+  const sources = readSourcePair(value);
+  if (!sources) return null;
+  if (!isNonEmptyString(value.referenceDate) || !isNonEmptyString(value.fetchedAt)) return null;
+  if (typeof value.reused !== "boolean") return null;
+  const billing = readBilling(value.billing);
+  if (!billing) return null;
   const invalidHandles = readInvalidHandles(value.invalidHandles);
   if (!invalidHandles) return null;
   const fetchOutcomes: FetchOutcome[] = [];
@@ -181,7 +324,7 @@ function readAnalyzeSuccess(value: unknown): AnalyzeSuccess | null {
     if (!report) return null;
     reports.push(report);
   }
-  return { invalidHandles, fetchOutcomes, reports };
+  return { ...sources, referenceDate: value.referenceDate, fetchedAt: value.fetchedAt, reused: value.reused, billing, invalidHandles, fetchOutcomes, reports };
 }
 
 function sameInvalid(raw: string, handle: string): boolean {
@@ -191,6 +334,7 @@ function sameInvalid(raw: string, handle: string): boolean {
 export function statusLines(input: {
   invalidHandles: InvalidHandle[];
   fetchOutcomes: FetchOutcome[];
+  postsSource?: "fixtures" | "desearch";
 }): StatusLine[] {
   const lines: StatusLine[] = input.invalidHandles.map((item, index) => ({
     key: `invalid-${index}-${item.raw}`,
@@ -215,14 +359,20 @@ export function statusLines(input: {
     if (outcome.status === "unknown_handle") {
       lines.push({
         key: `unknown-${index}-${outcome.handle}`,
-        text: `Unknown handle "${outcome.handle}" (not in the fixture catalog)`,
+        text:
+          input.postsSource === "desearch"
+            ? `Unknown handle "${outcome.handle}" (not returned by retrieval)`
+            : `Unknown handle "${outcome.handle}" (not in the fixture catalog)`,
       });
       return;
     }
     if (outcome.status === "empty") {
       lines.push({
         key: `empty-${index}-${outcome.handle}`,
-        text: `No posts for "${outcome.handle}" in the fixtures`,
+        text:
+          input.postsSource === "desearch"
+            ? `No posts for "${outcome.handle}" in the retrieved slice`
+            : `No posts for "${outcome.handle}" in the fixtures`,
       });
       return;
     }
@@ -246,7 +396,29 @@ function StatusList({ lines }: { lines: StatusLine[] }) {
   );
 }
 
-function ReportCard({ report }: { report: OutlookReport }) {
+function usageText(usage: ProviderUsage | null | undefined, modelInvoked?: boolean): string | null {
+  if (modelInvoked === false) return "Provider usage: no request was sent";
+  if (usage === undefined) return null;
+  if (usage === null) return "Provider usage: not reported";
+  return `Provider usage: prompt_tokens=${usage.promptTokens} completion_tokens=${usage.completionTokens} total_tokens=${usage.totalTokens}`;
+}
+
+function billingText(item: BillingItem): string {
+  const parts: string[] = [];
+  if (item.costUsd !== undefined) parts.push(`Desearch reported cost USD ${item.costUsd}`);
+  if (item.usageCount !== undefined) parts.push(`Desearch usage count ${item.usageCount}`);
+  if (item.service) parts.push(`Service ${item.service}`);
+  if (item.currency) parts.push(`Currency ${item.currency}`);
+  return parts.join(". ");
+}
+
+function ReportCard({
+  report,
+  postsSource,
+}: {
+  report: OutlookReport;
+  postsSource: "fixtures" | "desearch";
+}) {
   const headingId = `report-${report.handle}`;
   return (
     <article className="report-card" aria-labelledby={headingId}>
@@ -280,7 +452,9 @@ function ReportCard({ report }: { report: OutlookReport }) {
           {report.evidence.map((item) => (
             <li key={item.postId}>
               <p className="evidence-list__fixture">
-                Fictional fixture link, not a live X link
+                {postsSource === "fixtures"
+                  ? "Fictional fixture link, not a live X link"
+                  : "Retrieved post link"}
               </p>
               <a href={item.url}>{item.url}</a>
               <p>Author: {report.handle}</p>
@@ -291,6 +465,22 @@ function ReportCard({ report }: { report: OutlookReport }) {
           ))}
         </ul>
       )}
+      {report.analysisInput && report.analysisInput.length > 0 && (
+        <>
+          <h4>Analysis input</h4>
+          <ul>
+            {report.analysisInput.map((item) => (
+              <li key={item.postId}>
+                {item.postId}: {item.disposition} ({item.reason}, {item.originalChars} to{" "}
+                {item.sentChars} characters)
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {usageText(report.providerUsage, report.modelInvoked) && (
+        <p>{usageText(report.providerUsage, report.modelInvoked)}</p>
+      )}
     </article>
   );
 }
@@ -299,6 +489,7 @@ export function App() {
   const [metaState, setMetaState] = useState<MetaState>({ status: "loading" });
   const [handles, setHandles] = useState(DEFAULT_HANDLES.join(","));
   const [question, setQuestion] = useState(DEFAULT_QUESTION);
+  const [fresh, setFresh] = useState(false);
   const [run, setRun] = useState<RunState>({ status: "idle" });
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -344,7 +535,7 @@ export function App() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handles, question }),
+        body: JSON.stringify(fresh ? { handles, question, fresh: true } : { handles, question }),
       });
       let payload: unknown;
       try {
@@ -364,14 +555,17 @@ export function App() {
           isRecord(payload) && typeof payload.error === "string"
             ? payload.error
             : `API returned ${res.status}`;
+        const record = isRecord(payload) ? payload : undefined;
         if (mounted.current) {
           setRun({
             status: "error",
             message,
-            invalidHandles:
-              readInvalidHandles(
-                isRecord(payload) ? payload.invalidHandles : undefined,
-              ) ?? [],
+            invalidHandles: readInvalidHandles(record?.invalidHandles) ?? [],
+            providerUsages: readProviderUsages(record?.providerUsages),
+            billing: readBilling(record?.billing) ?? undefined,
+            fetchedAt: record && isNonEmptyString(record.fetchedAt) ? record.fetchedAt : undefined,
+            reused: record && typeof record.reused === "boolean" ? record.reused : undefined,
+            sliceStored: record && typeof record.sliceStored === "boolean" ? record.sliceStored : undefined,
           });
         }
         return;
@@ -409,24 +603,39 @@ export function App() {
       : run.status === "error"
         ? statusLines({ invalidHandles: run.invalidHandles, fetchOutcomes: [] })
         : [];
+  const meta = metaState.status === "ok" ? metaState.meta : null;
+  const mockLabels =
+    !meta || (meta.postsSource === "fixtures" && meta.analysisSource === "mock-rules" && meta.demo);
 
   return (
     <div className="app">
       <header className="demo-banner" role="status">
-        <p className="demo-banner__title">
-          Demo mode — fixture posts only; no live API or LLM
-        </p>
-        <p className="demo-banner__sub">
-          This web preview uses local mock data. It does not call Desearch, X, or
-          any paid service.
-        </p>
+        {mockLabels ? (
+          <>
+            <p className="demo-banner__title">
+              Demo mode — fixture posts only; no live API or LLM
+            </p>
+            <p className="demo-banner__sub">
+              This web preview uses local mock data. It does not call Desearch, X, or
+              any paid service.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="demo-banner__title">
+              Posts source: {meta?.postsSource}. Analysis source: {meta?.analysisSource}.
+            </p>
+            <p className="demo-banner__sub">{meta?.description}</p>
+          </>
+        )}
       </header>
 
       <main className="main">
-        <h1 className="title">x-analyst (mock)</h1>
+        <h1 className="title">{mockLabels ? "x-analyst (mock)" : "x-analyst"}</h1>
         <p className="lede">
-          Enter handles and a question. The report uses fixture posts and fixed
-          keyword rules.
+          {mockLabels
+            ? "Enter handles and a question. The report uses fixture posts and fixed keyword rules."
+            : "Enter handles and a question. Labels follow the configured post source and analysis source."}
         </p>
 
         <form className="analyze-form" aria-label="Analyze analysts" onSubmit={onSubmit}>
@@ -451,8 +660,24 @@ export function App() {
             />
           </label>
           <p className="analyze-form__note" id="question-note">
-            The mock analyzer uses fixed keyword rules. Changing the question
-            does not change its analysis.
+            {meta?.analysisSource === "chutes"
+              ? "The question is sent to the model and must be at most 500 characters."
+              : "The mock analyzer uses fixed keyword rules. Changing the question does not change its analysis."}
+          </p>
+          <label className="analyze-form__field" htmlFor="fresh">
+            <input
+              id="fresh"
+              name="fresh"
+              type="checkbox"
+              checked={fresh}
+              onChange={(event) => setFresh(event.target.checked)}
+            />
+            Fetch a new slice
+          </label>
+          <p className="analyze-form__note">
+            Unchecked reuses a matching slice already fetched by this server process.
+            Checked fetches again. A reused slice is not a new fetch. Analysis can
+            still run again.
           </p>
           <button type="submit" disabled={run.status === "loading"}>
             {run.status === "loading" ? "Analyzing…" : "Analyze"}
@@ -462,15 +687,51 @@ export function App() {
         <section className="results" aria-live="polite" aria-label="Analysis results">
           {run.status === "loading" && <p className="results__loading">Analyzing…</p>}
           {run.status === "error" && (
-            <p className="form-error" role="alert">
-              {run.message}
-            </p>
+            <div>
+              <p className="form-error" role="alert">
+                {run.message}
+              </p>
+              {run.sliceStored !== undefined && (
+                <p>The run failed. No complete report was produced.</p>
+              )}
+              {run.providerUsages?.map((usage, index) => (
+                <p key={`error-usage-${index}`}>{usageText(usage)}</p>
+              ))}
+              {run.billing?.map((item, index) => (
+                <p key={`error-billing-${index}`}>{billingText(item)}</p>
+              ))}
+              {run.sliceStored && run.fetchedAt && (
+                <p>
+                  {run.reused ? "Reused an earlier slice." : "Fetched a new slice."} Fetched at{" "}
+                  {run.fetchedAt}.
+                </p>
+              )}
+              {run.sliceStored === false && <p>Slice: not stored.</p>}
+            </div>
           )}
           <StatusList lines={status} />
-          {run.status === "ok" &&
-            run.result.reports.map((report) => (
-              <ReportCard key={report.handle} report={report} />
-            ))}
+          {run.status === "ok" && (
+            <>
+              <p>
+                Posts source: {run.result.postsSource}. Analysis source: {run.result.analysisSource}.
+                Analysis reference date: {run.result.referenceDate}.
+              </p>
+              <p>
+                {run.result.reused ? "Reused an earlier slice." : "Fetched a new slice."} Fetched at{" "}
+                {run.result.fetchedAt}.
+              </p>
+              {run.result.billing.map((item, index) => (
+                <p key={`billing-${index}`}>{billingText(item)}</p>
+              ))}
+              {run.result.reports.map((report) => (
+                <ReportCard
+                  key={report.handle}
+                  report={report}
+                  postsSource={run.result.postsSource}
+                />
+              ))}
+            </>
+          )}
         </section>
 
         <section className="meta-panel" aria-labelledby="meta-heading">
