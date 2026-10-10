@@ -137,7 +137,10 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(report.outlook, "unclear");
     assert.equal(report.modelInvoked, false);
     assert.equal(report.postsExamined, 0);
-    assert.equal(report.dateRangeExamined, null);
+    assert.deepEqual(report.dateRangeExamined, {
+      from: "2026-09-20T00:00:00.000Z",
+      to: "2026-09-20T00:00:00.000Z",
+    });
     assert.equal(report.evidence.length, 0);
     assert.deepEqual(
       report.analysisInput?.map((item) => item.reason),
@@ -411,7 +414,7 @@ describe("runLlmFixtureCheck", () => {
     assert.equal(prompt.includes("semiconductor demand"), false);
     assert.match(output, /not provider-reported usage/);
     assert.match(output, /prompt_tokens=11/);
-    assert.match(output, /b3 excluded \(repost\)/);
+    assert.match(output, /b3 2026-09-15T16:00:00.000Z excluded \(repost\)/);
     const estimateAt = output.indexOf("Pessimistic estimate");
     const usageAt = output.indexOf("Provider usage");
     assert.ok(estimateAt >= 0 && usageAt > estimateAt);

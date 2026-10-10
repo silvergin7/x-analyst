@@ -37,7 +37,7 @@ describe("DesearchPostsFetcher", () => {
     );
   });
 
-  it("paginates with cursor until per-person cap and marks incomplete", async () => {
+  it("keeps every post from paid pages and does not request another page after the cap", async () => {
     let call = 0;
     const transport: DesearchTransport = {
       async execute(request) {
@@ -78,7 +78,10 @@ describe("DesearchPostsFetcher", () => {
     assert.equal(call, 2);
     assert.equal(outcomes[0]?.status, "ok");
     if (outcomes[0]?.status === "ok") {
-      assert.equal(outcomes[0].posts.length, 3);
+      assert.deepEqual(
+        outcomes[0].posts.map((post) => post.id),
+        ["1", "2", "3", "4"],
+      );
       assert.equal(outcomes[0].retrievalComplete, false);
       assert.equal(outcomes[0].incompleteReason, "per_person_limit_reached");
     }
@@ -175,7 +178,7 @@ describe("DesearchPostsFetcher", () => {
     }
   });
 
-  it("marks incomplete when one response exceeds per-person cap without next_cursor", async () => {
+  it("keeps every post from a paid response that has no next page", async () => {
     const transport: DesearchTransport = {
       async execute() {
         return {
@@ -204,13 +207,13 @@ describe("DesearchPostsFetcher", () => {
     });
     assert.equal(outcomes[0]?.status, "ok");
     if (outcomes[0]?.status === "ok") {
-      assert.equal(outcomes[0].posts.length, 2);
-      assert.equal(outcomes[0].retrievalComplete, false);
-      assert.equal(outcomes[0].incompleteReason, "per_person_limit_reached");
+      assert.equal(outcomes[0].posts.length, 4);
+      assert.equal(outcomes[0].retrievalComplete, true);
+      assert.equal(outcomes[0].incompleteReason, undefined);
     }
   });
 
-  it("marks incomplete when one response exceeds remaining total cap without next_cursor", async () => {
+  it("keeps every post from a paid response that exceeds the total cap and has no next page", async () => {
     const transport: DesearchTransport = {
       async execute() {
         return {
@@ -238,9 +241,9 @@ describe("DesearchPostsFetcher", () => {
     });
     assert.equal(outcomes[0]?.status, "ok");
     if (outcomes[0]?.status === "ok") {
-      assert.equal(outcomes[0].posts.length, 2);
-      assert.equal(outcomes[0].retrievalComplete, false);
-      assert.equal(outcomes[0].incompleteReason, "total_post_limit_reached");
+      assert.equal(outcomes[0].posts.length, 3);
+      assert.equal(outcomes[0].retrievalComplete, true);
+      assert.equal(outcomes[0].incompleteReason, undefined);
     }
   });
 

@@ -14,7 +14,7 @@ import type {
   ProviderTokenUsage,
   RetrievalContext,
 } from "../types.js";
-import { planAnalysisInput, type SentPost } from "./analysisInput.js";
+import { comparePostTime, planAnalysisInput, type SentPost } from "./analysisInput.js";
 import {
   requestChutesCompletion,
   type ChutesTransport,
@@ -53,8 +53,8 @@ export class LlmCitationError extends Error {
 
 function dateRange(posts: Post[]): { from: string; to: string } | null {
   if (posts.length === 0) return null;
-  const times = posts.map((post) => post.timestamp).sort();
-  return { from: times[0]!, to: times[times.length - 1]! };
+  const ordered = [...posts].sort(comparePostTime);
+  return { from: ordered[0]!.timestamp, to: ordered[ordered.length - 1]!.timestamp };
 }
 
 function assertQuestionBound(question: string): void {
@@ -198,11 +198,10 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     retrieval: RetrievalContext,
   ): Promise<PersonOutlookReport> {
     assertQuestionBound(question.text);
-    const plan = planAnalysisInput(posts, handle);
-    const sentPosts = plan.sent.map((item) => item.post);
+    const plan = planAnalysisInput(posts, handle, retrieval.eligiblePostCap);
     const base = {
       handle,
-      dateRangeExamined: dateRange(sentPosts),
+      dateRangeExamined: dateRange(posts),
       postsExamined: plan.sent.length,
       retrievalComplete: retrieval.retrievalComplete,
       retrievalIncompleteReason: retrieval.incompleteReason,

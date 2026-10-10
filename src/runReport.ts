@@ -12,6 +12,7 @@ import {
   loadDesearchSettings,
 } from "./config/desearchSettings.js";
 import {
+  LLM_MAX_ELIGIBLE_POSTS,
   LLM_MAX_QUESTION_CHARS,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
@@ -272,6 +273,7 @@ export async function runReport(
         const report = await analyzer.analyzePerson(outcome.handle, outcome.posts, question, {
           retrievalComplete: outcome.retrievalComplete,
           incompleteReason: outcome.incompleteReason,
+          eligiblePostCap: Math.min(limits.maxPostsPerPerson, LLM_MAX_ELIGIBLE_POSTS),
         });
         if (report.providerUsage) providerUsages.push(report.providerUsage);
         reports.push(report);

@@ -1,6 +1,5 @@
-import { planAnalysisInput } from "./analysisInput.js";
+import { comparePostTime, planAnalysisInput } from "./analysisInput.js";
 import type {
-  AnalysisInputRecord,
   AnalysisQuestion,
   EvidenceRef,
   MarketOutlook,
@@ -69,8 +68,8 @@ function scorePost(post: Post): ScoredSignal | null {
 
 function dateRange(posts: Post[]): { from: string; to: string } | null {
   if (posts.length === 0) return null;
-  const times = posts.map((p) => p.timestamp).sort();
-  return { from: times[0]!, to: times[times.length - 1]! };
+  const ordered = [...posts].sort(comparePostTime);
+  return { from: ordered[0]!.timestamp, to: ordered[ordered.length - 1]!.timestamp };
 }
 
 function toEvidence(post: Post): EvidenceRef {
@@ -103,17 +102,12 @@ export class MockOutlookAnalyzer implements OutlookAnalyzer {
       (a, b) => b.timestamp.localeCompare(a.timestamp),
     );
     const range = dateRange(examined);
-    const inputPlan = planAnalysisInput(posts, handle);
-    const analysisInput: AnalysisInputRecord[] | undefined = inputPlan.records.some(
-      (record) => record.reason === "retweet_and_quote",
-    )
-      ? inputPlan.records
-      : undefined;
+    const inputPlan = planAnalysisInput(posts, handle, retrieval.eligiblePostCap);
     const baseMeta = {
       postsExamined: examined.length,
       retrievalComplete: retrieval.retrievalComplete,
       retrievalIncompleteReason: retrieval.incompleteReason,
-      ...(analysisInput ? { analysisInput } : {}),
+      analysisInput: inputPlan.records,
     };
 
     const signals = examined

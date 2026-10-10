@@ -16,6 +16,16 @@ export interface AnalysisInputPlan {
   sent: SentPost[];
 }
 
+/** Chronological order. Falls back to the raw timestamp string when parsing fails. */
+export function comparePostTime(a: Post, b: Post): number {
+  const aMs = Date.parse(a.timestamp);
+  const bMs = Date.parse(b.timestamp);
+  const aOk = Number.isFinite(aMs);
+  const bOk = Number.isFinite(bMs);
+  if (aOk && bOk && aMs !== bMs) return aMs - bMs;
+  return a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id);
+}
+
 function eligibleText(post: Post): string | null {
   if (post.typeConflict === "retweet_and_quote") return null;
   if (post.kind === "original") return post.text;
@@ -37,13 +47,18 @@ function exclusionReason(post: Post): string {
  * Choose model input from a retrieved slice.
  * Original posts send their own text. Quotes send only non-empty analyst commentary.
  * Reposts, quotes without commentary, and posts with both retweet and quote
- * flags are excluded. At most 10 eligible posts,
- * most recent first, are sent.
+ * flags are excluded. At most `eligibleCap` eligible posts, most recent first,
+ * are sent. The cap never exceeds the model limit of 10.
  */
 export function planAnalysisInput(
   posts: Post[],
   handle: string,
+  eligibleCap: number = LLM_MAX_ELIGIBLE_POSTS,
 ): AnalysisInputPlan {
+  const cap =
+    Number.isSafeInteger(eligibleCap) && eligibleCap >= 1
+      ? Math.min(eligibleCap, LLM_MAX_ELIGIBLE_POSTS)
+      : LLM_MAX_ELIGIBLE_POSTS;
   const eligible: { post: Post; text: string }[] = [];
   const ineligible = new Set<string>();
 
@@ -60,14 +75,8 @@ export function planAnalysisInput(
     eligible.push({ post, text });
   }
 
-  eligible.sort(
-    (a, b) =>
-      b.post.timestamp.localeCompare(a.post.timestamp) ||
-      a.post.id.localeCompare(b.post.id),
-  );
-  const kept = new Set(
-    eligible.slice(0, LLM_MAX_ELIGIBLE_POSTS).map((item) => item.post.id),
-  );
+  eligible.sort((a, b) => comparePostTime(b.post, a.post));
+  const kept = new Set(eligible.slice(0, cap).map((item) => item.post.id));
   const textById = new Map(eligible.map((item) => [item.post.id, item.text]));
 
   const records: AnalysisInputRecord[] = [];
@@ -77,6 +86,7 @@ export function planAnalysisInput(
     if (post.authorHandle !== handle) {
       records.push({
         postId: post.id,
+        timestamp: post.timestamp,
         disposition: "excluded",
         reason: "author_mismatch",
         originalChars: post.text.length,
@@ -91,6 +101,7 @@ export function planAnalysisInput(
           : post.text.length;
       records.push({
         postId: post.id,
+        timestamp: post.timestamp,
         disposition: "excluded",
         reason: exclusionReason(post),
         originalChars,
@@ -102,6 +113,7 @@ export function planAnalysisInput(
       const text = textById.get(post.id) ?? "";
       records.push({
         postId: post.id,
+        timestamp: post.timestamp,
         disposition: "excluded",
         reason: "beyond_analysis_post_cap",
         originalChars: text.length,
@@ -116,6 +128,7 @@ export function planAnalysisInput(
     const quote = post.kind === "quote";
     records.push({
       postId: post.id,
+      timestamp: post.timestamp,
       disposition: truncated ? "truncated" : "sent",
       reason: truncated
         ? quote

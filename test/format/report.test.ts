@@ -88,6 +88,7 @@ describe("formatPersonReport", () => {
       analysisInput: [
         {
           postId: "b3",
+          timestamp: "2026-09-19T00:00:00.000Z",
           disposition: "excluded",
           reason: "repost",
           originalChars: 12,
@@ -98,7 +99,7 @@ describe("formatPersonReport", () => {
     const text = formatPersonReport(report);
     assert.match(text, /source: llm, model invoked: yes/);
     assert.match(text, /prompt_tokens=4/);
-    assert.match(text, /b3 excluded/);
+    assert.match(text, /b3 2026-09-19T00:00:00.000Z excluded/);
     assert.doesNotMatch(text, /not LLM/);
   });
 });

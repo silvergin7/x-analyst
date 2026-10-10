@@ -74,10 +74,10 @@ export function formatPersonReport(report: PersonOutlookReport): string {
   lines.push(`  Explanation: ${report.explanation}`);
   if (report.dateRangeExamined) {
     lines.push(
-      `  Date range examined: ${report.dateRangeExamined.from} → ${report.dateRangeExamined.to}`,
+      `  Date range of retrieved slice: ${report.dateRangeExamined.from} → ${report.dateRangeExamined.to}`,
     );
   } else {
-    lines.push("  Date range examined: (none — no posts retrieved)");
+    lines.push("  Date range of retrieved slice: (none — no posts retrieved)");
   }
   if (report.evidence.length === 0) {
     lines.push("  Evidence: none");
@@ -93,7 +93,7 @@ export function formatPersonReport(report: PersonOutlookReport): string {
     lines.push("  Analysis input:");
     for (const record of report.analysisInput) {
       lines.push(
-        `    - ${record.postId} ${record.disposition} (${record.reason}, ${record.originalChars} -> ${record.sentChars})`,
+        `    - ${record.postId} ${record.timestamp} ${record.disposition} (${record.reason}, ${record.originalChars} -> ${record.sentChars})`,
       );
     }
   }

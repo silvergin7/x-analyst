@@ -78,7 +78,8 @@ describe("parseTwitterUserPostsResponse", () => {
     assert.equal(quote.ok, true);
     if (quote.ok) {
       assert.equal(quote.posts[0]?.kind, "quote");
-      assert.equal(quote.posts[0]?.analystComment, undefined);
+      assert.equal(quote.posts[0]?.analystComment, "Constructive on equities.");
+      assert.equal(quote.posts[0]?.quotedPostText, undefined);
     }
   });
 
@@ -162,6 +163,72 @@ describe("parseTwitterUserPostsResponse", () => {
     assert.equal(mixed?.text, "Sharing another account's market note.");
     assert.equal(result.posts[5]?.kind, "original");
     assert.equal(result.hasMorePages, false);
+  });
+
+  it("uses a quote's own text as commentary and keeps quote.text separate", () => {
+    const result = parseTwitterUserPostsResponse("sampleanalyst", {
+      tweets: [
+        validTweet({
+          id: "quote-1",
+          text: "  I still see room for duration to rally.  ",
+          is_retweet: false,
+          is_quote_tweet: true,
+          user: { username: "sampleanalyst" },
+          quote: {
+            id: "quoted-note",
+            text: "The quoted account's original market note.",
+            is_quote_tweet: false,
+            is_retweet: false,
+          },
+          retweet: {
+            text: "This retweet field must not be used as the quoted post.",
+          },
+        }),
+      ],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const post = result.posts[0];
+    assert.equal(post?.kind, "quote");
+    assert.equal(post?.analystComment, "I still see room for duration to rally.");
+    assert.equal(post?.quotedPostText, "The quoted account's original market note.");
+    assert.equal(post?.typeConflict, undefined);
+  });
+
+  it("keeps a quote with empty own text and does not invent commentary", () => {
+    const blank = parseTwitterUserPostsResponse("sampleanalyst", {
+      tweets: [
+        validTweet({
+          id: "quote-blank",
+          text: "   ",
+          is_retweet: false,
+          is_quote_tweet: true,
+          user: { username: "sampleanalyst" },
+          quote: { text: "Quoted words that stay out of commentary." },
+        }),
+      ],
+    });
+    assert.equal(blank.ok, true);
+    if (!blank.ok) return;
+    assert.equal(blank.posts[0]?.analystComment, undefined);
+    assert.equal(blank.posts[0]?.quotedPostText, "Quoted words that stay out of commentary.");
+
+    const missingQuoteText = parseTwitterUserPostsResponse("sampleanalyst", {
+      tweets: [
+        validTweet({
+          id: "quote-own",
+          text: "My comment stands alone.",
+          is_retweet: false,
+          is_quote_tweet: true,
+          user: { username: "sampleanalyst" },
+          quote: { id: "no-text" },
+        }),
+      ],
+    });
+    assert.equal(missingQuoteText.ok, true);
+    if (!missingQuoteText.ok) return;
+    assert.equal(missingQuoteText.posts[0]?.analystComment, "My comment stands alone.");
+    assert.equal(missingQuoteText.posts[0]?.quotedPostText, undefined);
   });
 
   it("rejects non-string next_cursor", () => {

@@ -35,10 +35,10 @@ export function formatLlmFixtureReport(report: PersonOutlookReport): string {
   lines.push(`  Posts sent to the model: ${report.postsExamined}`);
   if (report.dateRangeExamined) {
     lines.push(
-      `  Dates sent to the model: ${report.dateRangeExamined.from} → ${report.dateRangeExamined.to}`,
+      `  Date range of retrieved slice: ${report.dateRangeExamined.from} → ${report.dateRangeExamined.to}`,
     );
   } else {
-    lines.push("  Dates sent to the model: none");
+    lines.push("  Date range of retrieved slice: none");
   }
   if (!report.retrievalComplete && report.retrievalIncompleteReason) {
     lines.push(
@@ -55,7 +55,7 @@ export function formatLlmFixtureReport(report: PersonOutlookReport): string {
   lines.push("  Analysis input:");
   for (const record of report.analysisInput ?? []) {
     lines.push(
-      `    - ${record.postId} ${record.disposition} (${record.reason}); originalChars=${record.originalChars} sentChars=${record.sentChars}`,
+      `    - ${record.postId} ${record.timestamp} ${record.disposition} (${record.reason}); originalChars=${record.originalChars} sentChars=${record.sentChars}`,
     );
   }
   if (report.evidence.length === 0) {

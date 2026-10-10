@@ -29,6 +29,7 @@ interface EvidenceItem {
 
 interface AnalysisInputItem {
   postId: string;
+  timestamp?: string;
   disposition: string;
   reason: string;
   originalChars: number;
@@ -131,8 +132,11 @@ function readAnalysisInput(value: unknown): AnalysisInputItem[] | null | undefin
     ) {
       return null;
     }
+    const timestamp = item.timestamp;
+    if (timestamp !== undefined && !isNonEmptyString(timestamp)) return null;
     records.push({
       postId: item.postId,
+      ...(isNonEmptyString(timestamp) ? { timestamp } : {}),
       disposition: item.disposition,
       reason: item.reason,
       originalChars: item.originalChars,
@@ -430,7 +434,7 @@ function ReportCard({
       <p>Posts examined: {report.postsExamined}</p>
       {report.dateRangeExamined ? (
         <p>
-          Dates examined: {report.dateRangeExamined.from} → {report.dateRangeExamined.to}
+          Date range of retrieved slice: {report.dateRangeExamined.from} → {report.dateRangeExamined.to}
         </p>
       ) : (
         <p>No date range was returned for this report.</p>
@@ -471,8 +475,9 @@ function ReportCard({
           <ul>
             {report.analysisInput.map((item) => (
               <li key={item.postId}>
-                {item.postId}: {item.disposition} ({item.reason}, {item.originalChars} to{" "}
-                {item.sentChars} characters)
+                {item.postId}
+                {item.timestamp ? ` ${item.timestamp}` : ""}: {item.disposition} ({item.reason},{" "}
+                {item.originalChars} to {item.sentChars} characters)
               </li>
             ))}
           </ul>

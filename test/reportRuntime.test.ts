@@ -26,12 +26,15 @@ function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function tweet(id: string, quote: boolean, username = "bullmacro") {
   return {
     id,
-    text: quote ? "Quoted headline that must stay out of the prompt" : "Growth remains constructive.",
+    text: quote ? "   " : "Growth remains constructive.",
     created_at: "2026-09-20T14:00:00.000Z",
     url: `https://x.com/example/status/${id}`,
     is_retweet: false,
     is_quote_tweet: quote,
     user: { username },
+    ...(quote
+      ? { quote: { text: "Quoted headline that must stay out of the prompt" } }
+      : {}),
   };
 }
 
@@ -259,9 +262,84 @@ describe("runReport live gates", () => {
       reused: result.reused,
       billing: result.billing,
     });
-    assert.match(text, /mixed-5 excluded \(retweet_and_quote,/);
-    assert.match(text, /live-1 sent/);
-    assert.match(text, /live-2 sent/);
+    assert.match(text, /mixed-5 2026-10-08T15:00:00.000Z excluded \(retweet_and_quote,/);
+    assert.match(text, /live-1 2026-09-20T14:00:00.000Z sent/);
+    assert.match(text, /live-2 2026-09-20T14:00:00.000Z sent/);
+  });
+
+  it("sends a quote's own commentary and keeps every post from the paid response", async () => {
+    const posts = desearchTransport([
+      {
+        id: "repost-1",
+        text: "Reposted market note that must stay out.",
+        created_at: "Mon Oct 05 01:00:00 +0000 2026",
+        url: "https://fixture.x-analyst.local/status/repost-1",
+        is_retweet: true,
+        is_quote_tweet: false,
+        user: { username: "bullmacro" },
+      },
+      {
+        id: "quote-own",
+        text: "I still see room for duration to rally.",
+        created_at: "Fri Oct 09 05:35:09 +0000 2026",
+        url: "https://fixture.x-analyst.local/status/quote-own",
+        is_retweet: false,
+        is_quote_tweet: true,
+        user: { username: "bullmacro" },
+        quote: { text: "Quoted account text that must stay out of the prompt." },
+        retweet: { text: "Unused retweet field." },
+      },
+      tweet("live-1", false),
+    ]);
+    const model = chutesTransport({
+      outlook: "cautious",
+      explanation: "The supplied commentary is about duration.",
+      evidencePostIds: ["quote-own"],
+    });
+    const result = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: desearchEnv({ MAX_POSTS_PER_PERSON: "1" }),
+      cache: createFetchSliceCache(),
+      desearchTransport: posts.transport,
+      chutesTransport: model.transport,
+    });
+    assert.equal(posts.calls.length, 1);
+    assert.equal(model.calls.length, 1);
+    assert.equal(result.fetchOutcomes[0]?.status, "ok");
+    if (result.fetchOutcomes[0]?.status === "ok") {
+      assert.equal(result.fetchOutcomes[0].posts.length, 3);
+    }
+    const prompt = promptText(model.calls[0]!.body);
+    assert.match(prompt, /I still see room for duration to rally/);
+    assert.doesNotMatch(prompt, /Growth remains constructive/);
+    assert.doesNotMatch(prompt, /Quoted account text/);
+    assert.doesNotMatch(prompt, /Unused retweet field/);
+    assert.doesNotMatch(prompt, /Reposted market note/);
+    const sentIds = result.reports[0]?.analysisInput
+      ?.filter((record) => record.disposition === "sent")
+      .map((record) => record.postId);
+    assert.deepEqual(sentIds, ["quote-own"]);
+    const excluded = result.reports[0]?.analysisInput?.find(
+      (record) => record.postId === "repost-1",
+    );
+    assert.equal(excluded?.reason, "repost");
+    assert.equal(excluded?.timestamp, "Mon Oct 05 01:00:00 +0000 2026");
+    assert.equal(result.reports[0]?.dateRangeExamined?.from, "2026-09-20T14:00:00.000Z");
+    assert.equal(result.reports[0]?.dateRangeExamined?.to, "Fri Oct 09 05:35:09 +0000 2026");
+    const text = formatFullReport(question.text, [], result.reports, {
+      postsSource: result.postsSource,
+      analysisSource: result.analysisSource,
+      referenceDate: result.referenceDate,
+      fetchedAt: result.fetchedAt,
+      reused: result.reused,
+      billing: result.billing,
+    });
+    assert.match(
+      text,
+      /Date range of retrieved slice: 2026-09-20T14:00:00.000Z → Fri Oct 09 05:35:09 \+0000 2026/,
+    );
+    assert.match(text, /repost-1 Mon Oct 05 01:00:00 \+0000 2026 excluded \(repost,/);
+    assert.match(text, /live-1 2026-09-20T14:00:00.000Z excluded \(beyond_analysis_post_cap,/);
   });
 
   it("returns local unclear and skips Chutes when only an uncommented quote was retrieved", async () => {

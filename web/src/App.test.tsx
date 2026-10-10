@@ -119,7 +119,7 @@ describe("mock analyze form", () => {
     expect(card.textContent).toContain(evidenceReport.explanation);
     expect(card.textContent).toContain("Posts examined: 3");
     expect(card.textContent).toContain(
-      "Dates examined: 2026-09-18T09:30:00.000Z → 2026-09-20T14:00:00.000Z",
+      "Date range of retrieved slice: 2026-09-18T09:30:00.000Z → 2026-09-20T14:00:00.000Z",
     );
     expect(card.textContent).toContain("Retrieval coverage: complete");
     expect(card.textContent).toContain("Fictional fixture link, not a live X link");

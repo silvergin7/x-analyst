@@ -12,6 +12,11 @@ export interface Post {
   /** For quotes: the analyst's own commentary, if any. */
   analystComment?: string;
   /**
+   * Text of the quoted post from Desearch `quote.text`, when that field is a string.
+   * Never sent as the analyst's words.
+   */
+  quotedPostText?: string;
+  /**
    * Both Desearch kind flags were true. The post is kept as a repost and
    * withheld from outlook text.
    */
@@ -80,6 +85,11 @@ export interface EvidenceRef {
 export interface RetrievalContext {
   retrievalComplete: boolean;
   incompleteReason?: FetchIncompleteReason;
+  /**
+   * How many eligible posts may be sent. Defaults to the model cap of 10.
+   * Reposts do not consume it.
+   */
+  eligiblePostCap?: number;
 }
 
 export interface PersonOutlookReport {
@@ -115,6 +125,8 @@ export interface PersonOutlookReport {
 /** One retrieved post as included, truncated, or left out of model input. */
 export interface AnalysisInputRecord {
   postId: string;
+  /** Timestamp of the retrieved post. */
+  timestamp: string;
   disposition: "sent" | "truncated" | "excluded";
   reason: string;
   originalChars: number;

@@ -12,7 +12,6 @@ import type {
   FetchOutcome,
 } from "../../types.js";
 import type { PostsFetcher } from "../postsFetcher.js";
-import { outcomeFromRetrievedPosts } from "../limitEnforcement.js";
 import { DesearchPaginationError, fetchHandlePages } from "./fetchHandlePages.js";
 import {
   DesearchRetrievalError,
@@ -163,40 +162,31 @@ export class DesearchPostsFetcher implements PostsFetcher {
         continue;
       }
 
-      const { outcome, remainingTotal: nextRemaining } = outcomeFromRetrievedPosts(
-        handle,
-        pageResult.posts,
-        limits,
-        remainingTotal,
-      );
-
-      if (
-        outcome.status === "ok" &&
-        (pageResult.apiHasMorePages || pageResult.truncatedLastResponse)
-      ) {
-        let incompleteReason: FetchIncompleteReason;
+      const posts = pageResult.posts;
+      let incompleteReason: FetchIncompleteReason | undefined;
+      if (pageResult.apiHasMorePages) {
         if (pageResult.stoppedDueToRequestBudget) {
           incompleteReason = "desearch_request_budget_exhausted";
-        } else if (pageResult.posts.length >= limits.maxPostsPerPerson) {
+        } else if (posts.length >= limits.maxPostsPerPerson) {
           incompleteReason = "per_person_limit_reached";
         } else {
           incompleteReason = "total_post_limit_reached";
         }
-        outcomes.push(
-          withBilling(
-            {
-              ...outcome,
-              retrievalComplete: false,
-              incompleteReason,
-            },
-            pageResult.billing,
-          ),
-        );
-      } else {
-        outcomes.push(withBilling(outcome, pageResult.billing));
       }
+      outcomes.push(
+        withBilling(
+          {
+            status: "ok",
+            handle,
+            posts,
+            retrievalComplete: incompleteReason === undefined,
+            incompleteReason,
+          },
+          pageResult.billing,
+        ),
+      );
 
-      remainingTotal = nextRemaining;
+      remainingTotal = Math.max(0, remainingTotal - posts.length);
     }
 
     return outcomes;

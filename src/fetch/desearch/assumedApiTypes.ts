@@ -11,6 +11,10 @@ export interface DesearchTwitterPostItem {
   url?: string;
   is_retweet?: boolean;
   is_quote_tweet?: boolean;
+  /** Documented nested quoted tweet. Its text is not the analyst's commentary. */
+  quote?: {
+    text?: string;
+  };
   user?: {
     username?: string;
   };

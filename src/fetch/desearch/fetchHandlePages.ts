@@ -43,7 +43,8 @@ function advanceCursor(
 }
 
 /**
- * Paginate via injected transport until post caps or request budget is satisfied.
+ * Paginate until the request budget is spent or kept posts already meet a cap.
+ * Every valid post from a response that was fetched is kept.
  */
 export async function fetchHandlePages(
   username: string,
@@ -123,24 +124,14 @@ export async function fetchHandlePages(
       break;
     }
 
-    let retainedFromPage = 0;
-    for (const post of parsed.posts) {
-      if (collected.length >= options.maxPostsThisHandle) {
-        stoppedDueToCap = true;
-        break;
-      }
-      if (collected.length >= options.remainingTotalCap) {
-        stoppedDueToCap = true;
-        break;
-      }
-      collected.push(post);
-      retainedFromPage += 1;
-    }
-    if (retainedFromPage < parsed.posts.length) {
-      truncatedLastResponse = true;
-    }
-
-    if (stoppedDueToCap || stoppedDueToRequestBudget) {
+    // Keep every valid post from this paid response. Do not start another page
+    // once the raw slice already meets a retention cap.
+    collected.push(...parsed.posts);
+    if (
+      collected.length >= options.maxPostsThisHandle ||
+      collected.length >= options.remainingTotalCap
+    ) {
+      stoppedDueToCap = true;
       break;
     }
 

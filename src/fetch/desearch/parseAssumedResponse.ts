@@ -55,6 +55,15 @@ function resolvePostKind(
   return { ok: true, kind: "original" };
 }
 
+/**
+ * The documented response example nests the quoted tweet at `quote`.
+ * Use `quote.text` only when it is a string. Do not read another field as the quoted post.
+ */
+function readQuotedPostText(item: Record<string, unknown>): string | undefined {
+  if (!isRecord(item.quote) || typeof item.quote.text !== "string") return undefined;
+  return item.quote.text;
+}
+
 function mapTweet(
   expectedUsername: string,
   item: unknown,
@@ -67,7 +76,7 @@ function mapTweet(
   if (typeof raw.id !== "string" || raw.id.trim() === "") {
     return { ok: false, reason: `item ${index}: missing tweet id` };
   }
-  if (typeof raw.text !== "string" || raw.text.trim() === "") {
+  if (typeof raw.text !== "string") {
     return { ok: false, reason: `item ${index}: missing tweet text` };
   }
   if (typeof raw.created_at !== "string" || !validateTimestamp(raw.created_at)) {
@@ -87,6 +96,12 @@ function mapTweet(
   const kindResult = resolvePostKind(raw, index);
   if (!kindResult.ok) return kindResult;
 
+  const ownText = raw.text.trim();
+  const pureQuote = kindResult.kind === "quote" && !kindResult.typeConflict;
+  if (ownText === "" && !pureQuote) {
+    return { ok: false, reason: `item ${index}: missing tweet text` };
+  }
+
   const post: Post = {
     id: raw.id.trim(),
     authorHandle,
@@ -96,6 +111,9 @@ function mapTweet(
     kind: kindResult.kind,
   };
   if (kindResult.typeConflict) post.typeConflict = kindResult.typeConflict;
+  if (pureQuote && ownText !== "") post.analystComment = ownText;
+  const quotedPostText = readQuotedPostText(item);
+  if (quotedPostText !== undefined) post.quotedPostText = quotedPostText;
   return { ok: true, post };
 }
 
