@@ -252,6 +252,32 @@ describe("parseTwitterUserPostsResponse", () => {
     }
   });
 
+  it("flags a non-empty documented media array and ignores item fields", () => {
+    const withMedia = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet({ media: [{ type: "photo", url: "https://example.invalid/secret.jpg" }] })],
+    });
+    assert.equal(withMedia.ok, true);
+    if (withMedia.ok) assert.equal(withMedia.posts[0]?.hasAttachedMedia, true);
+
+    const empty = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet({ media: [] })],
+    });
+    assert.equal(empty.ok, true);
+    if (empty.ok) assert.equal(empty.posts[0]?.hasAttachedMedia, undefined);
+
+    const missing = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet()],
+    });
+    assert.equal(missing.ok, true);
+    if (missing.ok) assert.equal(missing.posts[0]?.hasAttachedMedia, undefined);
+
+    const notAnArray = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet({ media: "photo" })],
+    });
+    assert.equal(notAnArray.ok, true);
+    if (notAnArray.ok) assert.equal(notAnArray.posts[0]?.hasAttachedMedia, undefined);
+  });
+
   it("rejects author username mismatch and duplicate ids", () => {
     assert.equal(
       parseTwitterUserPostsResponse("bullmacro", {

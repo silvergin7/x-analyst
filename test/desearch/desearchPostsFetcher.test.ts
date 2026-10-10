@@ -26,6 +26,62 @@ function tweetsBody(tweets: unknown[], next_cursor?: string) {
 }
 
 describe("DesearchPostsFetcher", () => {
+  it("removes a post id repeated on a later page", async () => {
+    const id = "2104906619062538582";
+    let call = 0;
+    const transport: DesearchTransport = {
+      async execute() {
+        call += 1;
+        if (call === 1) {
+          return {
+            status: 200,
+            body: tweetsBody(
+              [
+                {
+                  ...validApiTweet(id, "bullmacro", "Fri Oct 09 12:12:07 +0000 2026"),
+                  text: "First copy of the repeated post.",
+                },
+              ],
+              "page-2",
+            ),
+          };
+        }
+        return {
+          status: 200,
+          body: tweetsBody([
+            {
+              ...validApiTweet(id, "bullmacro", "Fri Oct 09 12:12:07 +0000 2026"),
+              text: "Later copy that must be dropped.",
+            },
+            validApiTweet("older", "bullmacro", "2026-09-01T00:00:00.000Z"),
+          ]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 3,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.equal(call, 2);
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].duplicatePostsRemoved, 1);
+      assert.deepEqual(
+        outcomes[0].posts.map((item) => item.id),
+        [id, "older"],
+      );
+      assert.equal(outcomes[0].posts[0]?.text, "First copy of the repeated post.");
+    }
+  });
+
   it("throws when live mode is not eligible", () => {
     assert.throws(
       () =>

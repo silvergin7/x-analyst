@@ -70,6 +70,15 @@ interface OutlookReport {
   newestRelevantPostAt?: string;
   viewMayBeStale?: boolean;
   fetchStopReason?: FetchStopReason;
+  duplicatePostsRemoved?: number;
+  postsWithMedia?: number;
+  assetOutlooks?: Array<{
+    assetClass: string;
+    outlook: string;
+    newestRelevantPostAt: string;
+    viewMayBeStale: boolean;
+    evidence: EvidenceItem[];
+  }>;
 }
 
 type FetchOutcome =
@@ -111,7 +120,7 @@ type RunState =
     }
   | { status: "ok"; result: AnalyzeSuccess };
 
-const OUTLOOKS = new Set(["bullish", "bearish", "cautious", "unclear"]);
+const OUTLOOKS = new Set(["bullish", "bearish", "cautious", "mixed", "unclear"]);
 const POST_KINDS = new Set(["original", "repost", "quote"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -272,6 +281,34 @@ function readEvidence(value: unknown): EvidenceItem[] | null {
   return evidence;
 }
 
+function readAssetOutlooks(value: unknown): OutlookReport["assetOutlooks"] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  const outlooks: NonNullable<OutlookReport["assetOutlooks"]> = [];
+  for (const item of value) {
+    if (
+      !isRecord(item) ||
+      !isNonEmptyString(item.assetClass) ||
+      typeof item.outlook !== "string" ||
+      !OUTLOOKS.has(item.outlook) ||
+      !isNonEmptyString(item.newestRelevantPostAt) ||
+      typeof item.viewMayBeStale !== "boolean"
+    ) {
+      return null;
+    }
+    const evidence = readEvidence(item.evidence);
+    if (!evidence) return null;
+    outlooks.push({
+      assetClass: item.assetClass,
+      outlook: item.outlook,
+      newestRelevantPostAt: item.newestRelevantPostAt,
+      viewMayBeStale: item.viewMayBeStale,
+      evidence,
+    });
+  }
+  return outlooks;
+}
+
 function readReport(value: unknown): OutlookReport | null {
   if (!isRecord(value) || !isNonEmptyString(value.handle)) return null;
   if (typeof value.outlook !== "string" || !OUTLOOKS.has(value.outlook)) return null;
@@ -311,6 +348,12 @@ function readReport(value: unknown): OutlookReport | null {
   ) {
     return null;
   }
+  const assetOutlooks = readAssetOutlooks(value.assetOutlooks);
+  if (assetOutlooks === null) return null;
+  if (value.duplicatePostsRemoved !== undefined && !isCount(value.duplicatePostsRemoved)) {
+    return null;
+  }
+  if (value.postsWithMedia !== undefined && !isCount(value.postsWithMedia)) return null;
   return {
     handle: value.handle,
     outlook: value.outlook,
@@ -333,6 +376,11 @@ function readReport(value: unknown): OutlookReport | null {
     Object.hasOwn(FETCH_STOP_LABEL, value.fetchStopReason)
       ? { fetchStopReason: value.fetchStopReason as FetchStopReason }
       : {}),
+    ...(assetOutlooks ? { assetOutlooks } : {}),
+    ...(isCount(value.duplicatePostsRemoved)
+      ? { duplicatePostsRemoved: value.duplicatePostsRemoved }
+      : {}),
+    ...(isCount(value.postsWithMedia) ? { postsWithMedia: value.postsWithMedia } : {}),
   };
 }
 
@@ -483,11 +531,39 @@ function ReportCard({
         </p>
       )}
       {report.newestRelevantPostAt && <p>Newest relevant post: {report.newestRelevantPostAt}</p>}
-      {report.viewMayBeStale && (
+      {report.viewMayBeStale && !report.assetOutlooks?.some((item) => item.viewMayBeStale) && (
         <p>
           The newest relevant post is older than {STALE_RELEVANT_POST_DAYS} days. The view may be
           stale.
         </p>
+      )}
+      {report.duplicatePostsRemoved !== undefined && report.duplicatePostsRemoved > 0 && (
+        <p>Duplicate post ids removed: {report.duplicatePostsRemoved}</p>
+      )}
+      {report.postsWithMedia !== undefined && <p>Posts with media: {report.postsWithMedia}</p>}
+      {report.assetOutlooks && report.assetOutlooks.length > 0 && (
+        <>
+          <h4>Asset outlooks</h4>
+          <ul>
+            {report.assetOutlooks.map((item) => (
+              <li key={item.assetClass}>
+                {item.assetClass}: {item.outlook}. Newest relevant post: {item.newestRelevantPostAt}
+                {item.viewMayBeStale && (
+                  <p>
+                    {item.assetClass}: The newest relevant post is older than {STALE_RELEVANT_POST_DAYS}{" "}
+                    days. The view may be stale.
+                  </p>
+                )}
+                <p>
+                  Cited relevant posts:{" "}
+                  {item.evidence.length === 0
+                    ? "none"
+                    : item.evidence.map((evidence) => evidence.postId).join(", ")}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       {report.fetchStopReason && (
         <p>Fetch stopped: {FETCH_STOP_LABEL[report.fetchStopReason]}</p>

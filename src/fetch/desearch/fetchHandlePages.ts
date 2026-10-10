@@ -1,4 +1,5 @@
 import { comparePostTime } from "../../analyze/analysisInput.js";
+import { dedupePostsById } from "../dedupePosts.js";
 import type { DesearchBilling, FetchStopReason, Post } from "../../types.js";
 import { buildTwitterUserPostsRequest } from "./buildRequest.js";
 import {
@@ -25,6 +26,7 @@ export interface FetchHandlePagesResult {
   apiHasMorePages: boolean;
   requestsUsed: number;
   billing: DesearchBilling[];
+  duplicatesRemoved: number;
 }
 
 function advanceCursor(nextCursor: string, seenCursors: Set<string>): string {
@@ -137,12 +139,14 @@ export async function fetchHandlePages(
     cursor = moveCursor(parsed.nextCursor);
   }
 
-  collected.sort((a, b) => comparePostTime(b, a));
+  const deduped = dedupePostsById(collected);
+  deduped.posts.sort((a, b) => comparePostTime(b, a));
   return {
-    posts: collected,
+    posts: deduped.posts,
     stopReason,
     apiHasMorePages: lastResponseHasMorePages && stopReason !== "no_more_pages",
     requestsUsed,
     billing,
+    duplicatesRemoved: deduped.duplicatesRemoved,
   };
 }

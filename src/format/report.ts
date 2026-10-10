@@ -85,10 +85,31 @@ export function formatPersonReport(report: PersonOutlookReport): string {
   if (report.newestRelevantPostAt) {
     lines.push(`  Newest relevant post: ${report.newestRelevantPostAt}`);
   }
-  if (report.viewMayBeStale) {
+  if (report.viewMayBeStale && !report.assetOutlooks?.some((item) => item.viewMayBeStale)) {
     lines.push(
       `  The newest relevant post is older than ${STALE_RELEVANT_POST_DAYS} days. The view may be stale.`,
     );
+  }
+  if (report.duplicatePostsRemoved !== undefined && report.duplicatePostsRemoved > 0) {
+    lines.push(`  Duplicate post ids removed: ${report.duplicatePostsRemoved}`);
+  }
+  if (report.postsWithMedia !== undefined) {
+    lines.push(`  Posts with media: ${report.postsWithMedia}`);
+  }
+  if (report.assetOutlooks && report.assetOutlooks.length > 0) {
+    lines.push("  Asset outlooks:");
+    for (const item of report.assetOutlooks) {
+      lines.push(
+        `    - ${item.assetClass}: ${item.outlook}. Newest relevant post: ${item.newestRelevantPostAt}`,
+      );
+      if (item.viewMayBeStale) {
+        lines.push(
+          `      ${item.assetClass}: The newest relevant post is older than ${STALE_RELEVANT_POST_DAYS} days. The view may be stale.`,
+        );
+      }
+      const cited = item.evidence.map((evidence) => evidence.postId).join(", ");
+      lines.push(`      Cited relevant posts: ${cited === "" ? "none" : cited}`);
+    }
   }
   if (report.fetchStopReason) {
     lines.push(`  Fetch stopped: ${FETCH_STOP_LABEL[report.fetchStopReason]}`);

@@ -1,21 +1,18 @@
 import {
   DEFAULT_ANALYSIS_REFERENCE_DATE,
-  LLM_MAX_EXPLANATION_CHARS,
   LLM_MAX_QUESTION_CHARS,
   parseAnalysisReferenceDate,
 } from "../config/llmSettings.js";
 import type {
   AnalysisQuestion,
-  EvidenceRef,
-  MarketOutlook,
   PersonOutlookReport,
   Post,
   PostSource,
-  ProviderTokenUsage,
   RetrievalContext,
 } from "../types.js";
-import { comparePostTime, planAnalysisInput, type SentPost } from "./analysisInput.js";
+import { comparePostTime, planAnalysisInput } from "./analysisInput.js";
 import { summarizeRelevance } from "./relevance.js";
+import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import {
   requestChutesCompletion,
   type ChutesTransport,
@@ -24,33 +21,10 @@ import { buildChatMessages } from "./llmPrompt.js";
 import type { LlmRuntimeConfig } from "../config/llmSettings.js";
 import type { OutlookAnalyzer } from "./outlookAnalyzer.js";
 import { validateEvidenceIntegrity } from "./outlookAnalyzer.js";
+import { checkClassifications, parseModelOutlook } from "./classification.js";
+import { LlmCitationError, LlmOutputError } from "./llmErrors.js";
 
-const OUTLOOKS = new Set<MarketOutlook>([
-  "bullish",
-  "bearish",
-  "cautious",
-  "unclear",
-]);
-
-export class LlmOutputError extends Error {
-  readonly code = "invalid_output" as const;
-  providerUsage: ProviderTokenUsage | null = null;
-
-  constructor(message: string) {
-    super(message);
-    this.name = "LlmOutputError";
-  }
-}
-
-export class LlmCitationError extends Error {
-  readonly code = "citation" as const;
-  providerUsage: ProviderTokenUsage | null = null;
-
-  constructor(message: string) {
-    super(message);
-    this.name = "LlmCitationError";
-  }
-}
+export { LlmCitationError, LlmOutputError };
 
 function dateRange(posts: Post[]): { from: string; to: string } | null {
   if (posts.length === 0) return null;
@@ -67,96 +41,6 @@ function assertQuestionBound(question: string): void {
       `Question is ${question.length} characters; the limit is ${LLM_MAX_QUESTION_CHARS}`,
     );
   }
-}
-
-interface ModelOutlook {
-  outlook: MarketOutlook;
-  explanation: string;
-  evidencePostIds: string[];
-}
-
-function parseModelOutlook(content: string): ModelOutlook {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch {
-    throw new LlmOutputError("Model content was not JSON");
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new LlmOutputError("Model content was not a JSON object");
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  const allowed = ["outlook", "explanation", "evidencePostIds"];
-  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key))) {
-    throw new LlmOutputError("Model JSON did not match the outlook schema");
-  }
-  if (typeof record.outlook !== "string" || !OUTLOOKS.has(record.outlook as MarketOutlook)) {
-    throw new LlmOutputError("Model outlook was not a supported value");
-  }
-  if (typeof record.explanation !== "string" || record.explanation.trim() === "") {
-    throw new LlmOutputError("Model explanation was empty");
-  }
-  if (record.explanation.length > LLM_MAX_EXPLANATION_CHARS) {
-    throw new LlmOutputError("Model explanation exceeded the length limit");
-  }
-  if (!Array.isArray(record.evidencePostIds)) {
-    throw new LlmOutputError("Model evidencePostIds was not an array");
-  }
-  if (!record.evidencePostIds.every((id) => typeof id === "string" && id.trim() !== "")) {
-    throw new LlmOutputError("Model evidencePostIds contained an invalid id");
-  }
-  return {
-    outlook: record.outlook as MarketOutlook,
-    explanation: record.explanation,
-    evidencePostIds: record.evidencePostIds as string[],
-  };
-}
-
-function evidenceFromSent(
-  handle: string,
-  outlook: MarketOutlook,
-  ids: string[],
-  sent: SentPost[],
-): EvidenceRef[] {
-  const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
-  if (duplicates.length > 0) {
-    throw new LlmCitationError(`Duplicate citation id ${duplicates[0]}`);
-  }
-  if (outlook !== "unclear" && ids.length === 0) {
-    throw new LlmCitationError("A stated outlook requires at least one citation id");
-  }
-
-  const byId = new Map(sent.map((item) => [item.post.id, item.post]));
-  const evidence: EvidenceRef[] = [];
-  for (const id of ids) {
-    const post = byId.get(id);
-    if (!post) {
-      throw new LlmCitationError(`Citation id ${id} was not in the model input`);
-    }
-    evidence.push({
-      postId: post.id,
-      url: post.url,
-      timestamp: post.timestamp,
-      kind: post.kind,
-    });
-  }
-
-  const reportHandleCheck: PersonOutlookReport = {
-    handle,
-    outlook,
-    explanation: "citation check",
-    dateRangeExamined: null,
-    postsExamined: sent.length,
-    retrievalComplete: true,
-    evidence,
-    analysisSource: "llm",
-  };
-  const integrity = validateEvidenceIntegrity(reportHandleCheck, sent.map((item) => item.post));
-  if (!integrity.valid) {
-    throw new LlmCitationError(integrity.errors.join("; "));
-  }
-  return evidence;
 }
 
 /**
@@ -213,6 +97,8 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       analysisInput: plan.records,
       analysisSource: "llm" as const,
       analysisReferenceDate: this.referenceDate,
+      duplicatePostsRemoved: retrieval.duplicatePostsRemoved,
+      postsWithMedia: posts.filter((post) => post.hasAttachedMedia === true).length,
     };
 
     if (plan.sent.length === 0) {
@@ -237,34 +123,52 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       this.config,
       messages,
       this.transport,
+      classificationOutputTokenCeiling(plan.sent.length),
     );
-    let parsed: ModelOutlook;
-    let evidence: EvidenceRef[];
     try {
-      parsed = parseModelOutlook(completion.content);
-      evidence = evidenceFromSent(
-        handle,
-        parsed.outlook,
-        parsed.evidencePostIds,
-        plan.sent,
+      const parsed = parseModelOutlook(completion.content);
+      const checked = checkClassifications(plan.sent, parsed, this.referenceDate);
+      const integrity = validateEvidenceIntegrity(
+        {
+          handle,
+          outlook: checked.outlook,
+          explanation: "citation check",
+          dateRangeExamined: null,
+          postsExamined: plan.sent.length,
+          retrievalComplete: true,
+          evidence: checked.evidence,
+          analysisSource: "llm",
+        },
+        plan.sent.map((item) => item.post),
       );
+      if (!integrity.valid) {
+        throw new LlmCitationError(integrity.errors.join("; "));
+      }
+      const relevance = summarizeRelevance(
+        plan.records,
+        checked.evidence,
+        this.referenceDate,
+      );
+      return {
+        ...base,
+        ...relevance,
+        relevantPostCount: checked.relevantPostCount,
+        newestRelevantPostAt: checked.newestRelevantPostAt,
+        outlook: checked.outlook,
+        explanation: checked.explanation,
+        evidence: checked.evidence,
+        classifications: checked.classifications,
+        assetOutlooks: checked.assetOutlooks,
+        modelInvoked: true,
+        providerUsage: completion.providerUsage,
+        budgetEstimate: completion.estimate,
+      };
     } catch (err) {
       if (err instanceof LlmOutputError || err instanceof LlmCitationError) {
         err.providerUsage = completion.providerUsage;
       }
       throw err;
     }
-
-    return {
-      ...base,
-      ...summarizeRelevance(plan.records, evidence, this.referenceDate),
-      outlook: parsed.outlook,
-      explanation: parsed.explanation,
-      evidence,
-      modelInvoked: true,
-      providerUsage: completion.providerUsage,
-      budgetEstimate: completion.estimate,
-    };
   }
 }
 

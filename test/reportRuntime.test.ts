@@ -5,6 +5,7 @@ import type { DesearchTransport } from "../src/fetch/desearch/desearchTransport.
 import { formatFullReport } from "../src/format/report.js";
 import { createFetchSliceCache } from "../src/runtime/fetchCache.js";
 import { ReportConfigError, ReportRunError, runReport } from "../src/runReport.js";
+import { classifiedOutlook } from "./classifiedOutlook.js";
 
 const question = { text: "What is each analyst's current market outlook?" };
 const MODEL = "Qwen/Qwen3-32B-TEE";
@@ -86,6 +87,28 @@ function chutesTransport(content: unknown, extra?: { finish_reason?: string; usa
 function promptText(body: string): string {
   const parsed = JSON.parse(body) as { messages: { content: string }[] };
   return parsed.messages.map((message) => message.content).join("\n");
+}
+
+function classified(
+  outlook: "bullish" | "bearish" | "cautious" | "mixed" | "unclear",
+  explanation: string,
+  ids: string[],
+) {
+  return classifiedOutlook({
+    outlook,
+    explanation,
+    posts: ids.map((postId) => ({
+      postId,
+      relevant: outlook !== "unclear",
+      asset_class: outlook === "unclear" ? ("none" as const) : ("macro" as const),
+      stance:
+        outlook === "bullish"
+          ? ("bullish" as const)
+          : outlook === "bearish"
+            ? ("bearish" as const)
+            : ("unclear" as const),
+    })),
+  });
 }
 
 describe("runReport live gates", () => {
@@ -173,11 +196,11 @@ describe("runReport live gates", () => {
       [tweet("quote-1", true), tweet("live-1", false)],
       { usageCount: 10 },
     );
-    const model = chutesTransport({
-      outlook: "bullish",
-      explanation: "The supplied original says growth remains constructive.",
-      evidencePostIds: ["live-1"],
-    });
+    const model = chutesTransport(classified(
+      "bullish",
+      "The supplied original says growth remains constructive.",
+      ["live-1"],
+    ));
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
       env: desearchEnv(),
@@ -231,11 +254,11 @@ describe("runReport live gates", () => {
       },
       tweet("live-2", false),
     ]);
-    const model = chutesTransport({
-      outlook: "bullish",
-      explanation: "The supplied originals say growth remains constructive.",
-      evidencePostIds: ["live-1", "live-2"],
-    });
+    const model = chutesTransport(classified(
+      "bullish",
+      "The supplied originals say growth remains constructive.",
+      ["live-1", "live-2"],
+    ));
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
       env: desearchEnv(),
@@ -292,14 +315,16 @@ describe("runReport live gates", () => {
       },
       tweet("live-1", false),
     ]);
-    const model = chutesTransport({
-      outlook: "cautious",
-      explanation: "The supplied commentary is about duration.",
-      evidencePostIds: ["quote-own"],
-    });
+    const commentary = "I still see room for duration to rally.";
+    const quoted = "Quoted account text that must stay out of the prompt.";
+    const model = chutesTransport(classified(
+      "cautious",
+      "The supplied commentary is about duration.",
+      ["quote-own"],
+    ));
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: desearchEnv({ LLM_INPUT_MAX_CHARS: "39" }),
+      env: desearchEnv({ LLM_INPUT_MAX_CHARS: String(commentary.length + quoted.length) }),
       cache: createFetchSliceCache(),
       desearchTransport: posts.transport,
       chutesTransport: model.transport,
@@ -312,8 +337,10 @@ describe("runReport live gates", () => {
     }
     const prompt = promptText(model.calls[0]!.body);
     assert.match(prompt, /I still see room for duration to rally/);
+    assert.match(prompt, /quoted post: another account's post, context only, never the analyst's own words/);
+    assert.match(prompt, /Quoted account text that must stay out of the prompt/);
+    assert.match(prompt, /Never attribute quoted text to the analyst/);
     assert.doesNotMatch(prompt, /Growth remains constructive/);
-    assert.doesNotMatch(prompt, /Quoted account text/);
     assert.doesNotMatch(prompt, /Unused retweet field/);
     assert.doesNotMatch(prompt, /Reposted market note/);
     const sentIds = result.reports[0]?.analysisInput
@@ -370,11 +397,11 @@ describe("runReport live gates", () => {
       () => new Date(times[Math.min(tick++, times.length - 1)]!),
     );
     const posts = desearchTransport([tweet("live-1", false)], { usageCount: 1 });
-    const model = chutesTransport({
-      outlook: "bullish",
-      explanation: "The supplied original says growth remains constructive.",
-      evidencePostIds: ["live-1"],
-    });
+    const model = chutesTransport(classified(
+      "bullish",
+      "The supplied original says growth remains constructive.",
+      ["live-1"],
+    ));
     const first = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "1" }),
@@ -455,11 +482,11 @@ describe("runReport live gates", () => {
 
   it("uses synthetic fixture wording only when the posts are fixtures", async () => {
     const posts = desearchTransport([tweet("live-1", false)]);
-    const model = chutesTransport({
-      outlook: "bullish",
-      explanation: "The fixture originals are constructive.",
-      evidencePostIds: ["b1"],
-    });
+    const model = chutesTransport(classified(
+      "bullish",
+      "The fixture originals are constructive.",
+      ["b1", "b2"],
+    ));
     await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
       env: {
@@ -508,11 +535,11 @@ describe("runReport live gates", () => {
                 {
                   finish_reason: "stop",
                   message: {
-                    content: JSON.stringify({
-                      outlook: "bullish",
-                      explanation: "The supplied original says growth remains constructive.",
-                      evidencePostIds: ["live-1"],
-                    }),
+                    content: JSON.stringify(classified(
+                      "bullish",
+                      "The supplied original says growth remains constructive.",
+                      ["live-1"],
+                    )),
                     refusal: null,
                   },
                 },

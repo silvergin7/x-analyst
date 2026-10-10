@@ -160,6 +160,7 @@ export async function requestChutesCompletion(
   config: LlmRuntimeConfig,
   messages: ChatMessage[],
   transport: ChutesTransport,
+  maxTokens?: number,
 ): Promise<ChutesCompletion> {
   if (!config.eligible) {
     throw new LlmCallError(
@@ -168,7 +169,7 @@ export async function requestChutesCompletion(
     );
   }
 
-  const requestBody = buildChutesRequestBody(messages, config.model);
+  const requestBody = buildChutesRequestBody(messages, config.model, maxTokens);
   const estimate = estimateRequestBudget(requestBody);
   if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
     throw new LlmCallError(

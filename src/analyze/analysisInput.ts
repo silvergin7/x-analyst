@@ -1,4 +1,8 @@
-import { LLM_INPUT_MAX_CHARS, LLM_MAX_POST_CHARS } from "../config/llmSettings.js";
+import {
+  LLM_INPUT_MAX_CHARS,
+  LLM_MAX_POST_CHARS,
+  LLM_MAX_QUOTE_CONTEXT_CHARS,
+} from "../config/llmSettings.js";
 import type { AnalysisInputRecord, Post } from "../types.js";
 
 export const SENT_TEXT_EXCERPT_CHARS = 100;
@@ -10,6 +14,10 @@ export interface SentPost {
   text: string;
   originalChars: number;
   truncated: boolean;
+  /** `quote.text` cut at 500 characters. Present when that field was a string. */
+  quoteContext?: string;
+  quoteContextOriginalChars?: number;
+  quoteContextTruncated?: boolean;
 }
 
 export interface AnalysisInputPlan {
@@ -93,9 +101,10 @@ function pastLookback(post: Post, cutoffMs: number | undefined): boolean {
  * Choose model input from a retrieved slice.
  * Posts are ordered by parsed timestamp, newest first.
  * Originals and quotes with commentary inside the lookback window are eligible.
- * Each post is cut at 1,000 characters. Eligible posts are sent until the
- * character budget is used up. A post that does not fit, and every later
- * eligible post, is listed as excluded.
+ * Each post is cut at 1,000 characters. A sent quote also includes `quote.text`,
+ * cut at 500 characters, and that context counts toward the same character budget.
+ * Eligible posts are sent until the budget is used up. A post that does not fit,
+ * and every later eligible post, is listed as excluded.
  */
 export function planAnalysisInput(
   posts: Post[],
@@ -130,13 +139,22 @@ export function planAnalysisInput(
     }
     const truncated = full.length > LLM_MAX_POST_CHARS;
     const text = truncated ? full.slice(0, LLM_MAX_POST_CHARS) : full;
-    if (budgetClosed || used + text.length > budget) {
+    const quote = post.kind === "quote";
+    const quoteOriginal =
+      quote && typeof post.quotedPostText === "string" ? post.quotedPostText : undefined;
+    const quoteContext =
+      quoteOriginal === undefined
+        ? undefined
+        : quoteOriginal.slice(0, LLM_MAX_QUOTE_CONTEXT_CHARS);
+    const quoteContextTruncated =
+      quoteOriginal !== undefined && quoteOriginal.length > LLM_MAX_QUOTE_CONTEXT_CHARS;
+    const quoteChars = quoteContext?.length ?? 0;
+    if (budgetClosed || used + text.length + quoteChars > budget) {
       budgetClosed = true;
       records.push(excluded(post, BEYOND_INPUT_BUDGET_REASON, full.length));
       continue;
     }
-    used += text.length;
-    const quote = post.kind === "quote";
+    used += text.length + quoteChars;
     records.push({
       postId: post.id,
       timestamp: post.timestamp,
@@ -151,11 +169,21 @@ export function planAnalysisInput(
       originalChars: full.length,
       sentChars: text.length,
       sentExcerpt: excerpt(text),
-      ...(quote && typeof post.quotedPostText === "string"
-        ? { quotedPostExcerpt: excerpt(post.quotedPostText) }
+      ...(quoteOriginal !== undefined ? { quotedPostExcerpt: excerpt(quoteOriginal) } : {}),
+    });
+    sent.push({
+      post,
+      text,
+      originalChars: full.length,
+      truncated,
+      ...(quoteContext !== undefined
+        ? {
+            quoteContext,
+            quoteContextOriginalChars: quoteOriginal?.length ?? 0,
+            quoteContextTruncated,
+          }
         : {}),
     });
-    sent.push({ post, text, originalChars: full.length, truncated });
   }
 
   return { records, sent };

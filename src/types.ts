@@ -21,6 +21,12 @@ export interface Post {
    * withheld from outlook text.
    */
   typeConflict?: "retweet_and_quote";
+  /**
+   * The documented `tweets[].media` array was non-empty.
+   * Item fields such as type are not documented, so this is attached media,
+   * not a claim that every item is a photo.
+   */
+  hasAttachedMedia?: boolean;
 }
 
 /** Configurable caps for retrieval (mock and future live fetch). */
@@ -65,6 +71,8 @@ type FetchOutcomeShape =
       incompleteReason?: FetchIncompleteReason;
       /** Exact reason the last page request stopped. Present for Desearch slices. */
       fetchStopReason?: FetchStopReason;
+      /** Copies of a post id dropped because a later page repeated it. */
+      duplicatePostsRemoved?: number;
     }
   | {
       status: "incomplete";
@@ -83,7 +91,35 @@ export type MarketOutlook =
   | "bullish"
   | "bearish"
   | "cautious"
+  | "mixed"
   | "unclear";
+
+export type AssetClass =
+  | "equities"
+  | "rates_bonds"
+  | "crypto"
+  | "commodities"
+  | "fx"
+  | "macro"
+  | "none";
+
+export type Stance = "bullish" | "bearish" | "neutral" | "unclear";
+
+export interface PostClassification {
+  postId: string;
+  relevant: boolean;
+  assetClass: AssetClass;
+  stance: Stance;
+  reason: string;
+}
+
+export interface AssetClassOutlook {
+  assetClass: Exclude<AssetClass, "none">;
+  outlook: MarketOutlook;
+  evidence: EvidenceRef[];
+  newestRelevantPostAt: string;
+  viewMayBeStale: boolean;
+}
 
 export interface EvidenceRef {
   postId: string;
@@ -101,6 +137,7 @@ export interface RetrievalContext {
   lookbackCutoffMs?: number;
   /** Total characters of eligible post text that may be sent. */
   inputMaxChars?: number;
+  duplicatePostsRemoved?: number;
 }
 
 export interface PersonOutlookReport {
@@ -133,13 +170,21 @@ export interface PersonOutlookReport {
   analysisReferenceDate?: string;
   /** Eligible posts in the window, including those that did not fit the character budget. */
   eligiblePostCount?: number;
-  /** Cited posts that were actually sent and passed citation checks. */
+  /** Posts the model classified as relevant. */
   relevantPostCount?: number;
-  /** Timestamp of the newest cited relevant post. */
+  /** Timestamp of the newest post classified as relevant. */
   newestRelevantPostAt?: string;
   /** True when that newest relevant post is older than 14 days before the reference date. */
   viewMayBeStale?: boolean;
   fetchStopReason?: FetchStopReason;
+  /** One judgment for every post sent to the model. */
+  classifications?: PostClassification[];
+  /** Outlook for each asset class that has relevant posts. */
+  assetOutlooks?: AssetClassOutlook[];
+  /** Repeated post ids dropped across Desearch pages. */
+  duplicatePostsRemoved?: number;
+  /** Retrieved posts whose documented media array was non-empty. */
+  postsWithMedia?: number;
 }
 
 /** One retrieved post as included, truncated, or left out of model input. */

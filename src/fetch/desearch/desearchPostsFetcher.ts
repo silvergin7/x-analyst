@@ -159,6 +159,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
               ? undefined
               : "desearch_request_budget_exhausted",
             fetchStopReason: pageResult.stopReason,
+            duplicatePostsRemoved: pageResult.duplicatesRemoved,
           },
           pageResult.billing,
         ),

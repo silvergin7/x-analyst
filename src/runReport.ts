@@ -286,6 +286,7 @@ export async function runReport(
           fetchStopReason: outcome.fetchStopReason,
           lookbackCutoffMs: postsSource === "desearch" ? cutoffMs : undefined,
           inputMaxChars,
+          duplicatePostsRemoved: outcome.duplicatePostsRemoved,
         });
         if (report.providerUsage) providerUsages.push(report.providerUsage);
         reports.push(report);

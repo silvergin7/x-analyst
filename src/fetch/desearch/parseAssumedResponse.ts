@@ -114,7 +114,19 @@ function mapTweet(
   if (pureQuote && ownText !== "") post.analystComment = ownText;
   const quotedPostText = readQuotedPostText(item);
   if (quotedPostText !== undefined) post.quotedPostText = quotedPostText;
+  if (hasAttachedMedia(item)) post.hasAttachedMedia = true;
   return { ok: true, post };
+}
+
+/**
+ * The user-posts example includes `tweets[].media` as an array.
+ * A non-empty array is attached media. Item fields are not documented,
+ * so this does not read type, url, or any other key, and it does not
+ * download the media.
+ */
+function hasAttachedMedia(item: Record<string, unknown>): boolean {
+  if (!Object.hasOwn(item, "media")) return false;
+  return Array.isArray(item.media) && item.media.length > 0;
 }
 
 function readNextCursor(

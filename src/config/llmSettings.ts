@@ -25,6 +25,8 @@ export const LLM_MAX_OUTPUT_TOKENS = 800;
 /** Total characters of eligible post text sent to the model. Not a post-count cap. */
 export const LLM_INPUT_MAX_CHARS = 20_000;
 export const LLM_MAX_POST_CHARS = 1000;
+/** Quoted-post context cut before it is counted toward LLM_INPUT_MAX_CHARS. */
+export const LLM_MAX_QUOTE_CONTEXT_CHARS = 500;
 export const LLM_MAX_QUESTION_CHARS = 500;
 export const LLM_MAX_EXPLANATION_CHARS = 1500;
 export const LLM_REQUEST_TIMEOUT_MS = 30_000;
