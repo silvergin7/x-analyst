@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { DEFAULT_HANDLES, DEFAULT_QUESTION } from "../../src/config";
+import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../../src/config/timeWindow";
+import type { FetchStopReason } from "../../src/types";
 
 interface MetaResponse {
   mode: "mock" | "live";
@@ -34,6 +36,8 @@ interface AnalysisInputItem {
   reason: string;
   originalChars: number;
   sentChars: number;
+  sentExcerpt?: string;
+  quotedPostExcerpt?: string;
 }
 
 interface ProviderUsage {
@@ -61,6 +65,11 @@ interface OutlookReport {
   analysisInput?: AnalysisInputItem[];
   providerUsage?: ProviderUsage | null;
   modelInvoked?: boolean;
+  eligiblePostCount?: number;
+  relevantPostCount?: number;
+  newestRelevantPostAt?: string;
+  viewMayBeStale?: boolean;
+  fetchStopReason?: FetchStopReason;
 }
 
 type FetchOutcome =
@@ -134,6 +143,10 @@ function readAnalysisInput(value: unknown): AnalysisInputItem[] | null | undefin
     }
     const timestamp = item.timestamp;
     if (timestamp !== undefined && !isNonEmptyString(timestamp)) return null;
+    if (item.sentExcerpt !== undefined && typeof item.sentExcerpt !== "string") return null;
+    if (item.quotedPostExcerpt !== undefined && typeof item.quotedPostExcerpt !== "string") {
+      return null;
+    }
     records.push({
       postId: item.postId,
       ...(isNonEmptyString(timestamp) ? { timestamp } : {}),
@@ -141,6 +154,10 @@ function readAnalysisInput(value: unknown): AnalysisInputItem[] | null | undefin
       reason: item.reason,
       originalChars: item.originalChars,
       sentChars: item.sentChars,
+      ...(typeof item.sentExcerpt === "string" ? { sentExcerpt: item.sentExcerpt } : {}),
+      ...(typeof item.quotedPostExcerpt === "string"
+        ? { quotedPostExcerpt: item.quotedPostExcerpt }
+        : {}),
     });
   }
   return records;
@@ -276,6 +293,24 @@ function readReport(value: unknown): OutlookReport | null {
   if (value.providerUsage !== undefined && value.providerUsage !== null && !providerUsage) {
     return null;
   }
+  if (value.eligiblePostCount !== undefined && !isCount(value.eligiblePostCount)) return null;
+  if (value.relevantPostCount !== undefined && !isCount(value.relevantPostCount)) return null;
+  if (
+    value.newestRelevantPostAt !== undefined &&
+    !isNonEmptyString(value.newestRelevantPostAt)
+  ) {
+    return null;
+  }
+  if (value.viewMayBeStale !== undefined && typeof value.viewMayBeStale !== "boolean") {
+    return null;
+  }
+  if (
+    value.fetchStopReason !== undefined &&
+    (typeof value.fetchStopReason !== "string" ||
+      !Object.hasOwn(FETCH_STOP_LABEL, value.fetchStopReason))
+  ) {
+    return null;
+  }
   return {
     handle: value.handle,
     outlook: value.outlook,
@@ -288,6 +323,16 @@ function readReport(value: unknown): OutlookReport | null {
     analysisInput,
     providerUsage,
     modelInvoked: typeof value.modelInvoked === "boolean" ? value.modelInvoked : undefined,
+    ...(isCount(value.eligiblePostCount) ? { eligiblePostCount: value.eligiblePostCount } : {}),
+    ...(isCount(value.relevantPostCount) ? { relevantPostCount: value.relevantPostCount } : {}),
+    ...(isNonEmptyString(value.newestRelevantPostAt)
+      ? { newestRelevantPostAt: value.newestRelevantPostAt }
+      : {}),
+    ...(typeof value.viewMayBeStale === "boolean" ? { viewMayBeStale: value.viewMayBeStale } : {}),
+    ...(typeof value.fetchStopReason === "string" &&
+    Object.hasOwn(FETCH_STOP_LABEL, value.fetchStopReason)
+      ? { fetchStopReason: value.fetchStopReason as FetchStopReason }
+      : {}),
   };
 }
 
@@ -432,6 +477,21 @@ function ReportCard({
       <p className="report-card__outlook">Outlook: {report.outlook}</p>
       <p>{report.explanation}</p>
       <p>Posts examined: {report.postsExamined}</p>
+      {report.eligiblePostCount !== undefined && report.relevantPostCount !== undefined && (
+        <p>
+          Relevant posts: {report.relevantPostCount} of {report.eligiblePostCount} eligible
+        </p>
+      )}
+      {report.newestRelevantPostAt && <p>Newest relevant post: {report.newestRelevantPostAt}</p>}
+      {report.viewMayBeStale && (
+        <p>
+          The newest relevant post is older than {STALE_RELEVANT_POST_DAYS} days. The view may be
+          stale.
+        </p>
+      )}
+      {report.fetchStopReason && (
+        <p>Fetch stopped: {FETCH_STOP_LABEL[report.fetchStopReason]}</p>
+      )}
       {report.dateRangeExamined ? (
         <p>
           Date range of retrieved slice: {report.dateRangeExamined.from} → {report.dateRangeExamined.to}
@@ -478,6 +538,10 @@ function ReportCard({
                 {item.postId}
                 {item.timestamp ? ` ${item.timestamp}` : ""}: {item.disposition} ({item.reason},{" "}
                 {item.originalChars} to {item.sentChars} characters)
+                {item.sentExcerpt !== undefined && <p>Sent text: {item.sentExcerpt}</p>}
+                {item.quotedPostExcerpt !== undefined && (
+                  <p>Quoted post text: {item.quotedPostExcerpt}</p>
+                )}
               </li>
             ))}
           </ul>

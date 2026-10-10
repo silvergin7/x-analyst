@@ -15,6 +15,7 @@ import type {
   RetrievalContext,
 } from "../types.js";
 import { comparePostTime, planAnalysisInput, type SentPost } from "./analysisInput.js";
+import { summarizeRelevance } from "./relevance.js";
 import {
   requestChutesCompletion,
   type ChutesTransport,
@@ -198,13 +199,17 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     retrieval: RetrievalContext,
   ): Promise<PersonOutlookReport> {
     assertQuestionBound(question.text);
-    const plan = planAnalysisInput(posts, handle, retrieval.eligiblePostCap);
+    const plan = planAnalysisInput(posts, handle, {
+      inputMaxChars: retrieval.inputMaxChars,
+      lookbackCutoffMs: retrieval.lookbackCutoffMs,
+    });
     const base = {
       handle,
       dateRangeExamined: dateRange(posts),
       postsExamined: plan.sent.length,
       retrievalComplete: retrieval.retrievalComplete,
       retrievalIncompleteReason: retrieval.incompleteReason,
+      fetchStopReason: retrieval.fetchStopReason,
       analysisInput: plan.records,
       analysisSource: "llm" as const,
       analysisReferenceDate: this.referenceDate,
@@ -213,6 +218,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     if (plan.sent.length === 0) {
       return {
         ...base,
+        ...summarizeRelevance(plan.records, [], this.referenceDate),
         outlook: "unclear",
         explanation:
           "No original post and no quote with analyst commentary was available. The model was not called. Excluded posts were not model-examined.",
@@ -251,6 +257,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
 
     return {
       ...base,
+      ...summarizeRelevance(plan.records, evidence, this.referenceDate),
       outlook: parsed.outlook,
       explanation: parsed.explanation,
       evidence,

@@ -2,6 +2,7 @@ import type { FetchLimits } from "./types.js";
 
 const DEFAULT_MAX_POSTS_PER_PERSON = 10;
 const DEFAULT_MAX_POSTS_TOTAL = 25;
+const DEFAULT_LOOKBACK_DAYS = 30;
 
 /** Positive whole integers only; malformed env values use the fallback default. */
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -27,6 +28,11 @@ export function loadFetchLimits(
       DEFAULT_MAX_POSTS_TOTAL,
     ),
   };
+}
+
+/** Days of posts to retrieve before the analysis reference date. */
+export function loadLookbackDays(env: NodeJS.ProcessEnv = process.env): number {
+  return parsePositiveInt(env.LOOKBACK_DAYS, DEFAULT_LOOKBACK_DAYS);
 }
 
 export const DEFAULT_HANDLES = ["bullmacro", "bearmacro", "unclearmacro"] as const;

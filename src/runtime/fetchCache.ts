@@ -21,6 +21,8 @@ export function fetchCacheKey(input: {
   maxPostsPerPerson: number;
   maxPostsTotal: number;
   maxRequestsPerRun: number;
+  lookbackDays: number;
+  referenceDate: string;
 }): string {
   return JSON.stringify({
     postsSource: input.postsSource,
@@ -28,6 +30,8 @@ export function fetchCacheKey(input: {
     maxPostsPerPerson: input.maxPostsPerPerson,
     maxPostsTotal: input.maxPostsTotal,
     maxRequestsPerRun: input.maxRequestsPerRun,
+    lookbackDays: input.lookbackDays,
+    referenceDate: input.referenceDate,
   });
 }
 

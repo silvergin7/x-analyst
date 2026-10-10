@@ -102,11 +102,15 @@ export class MockOutlookAnalyzer implements OutlookAnalyzer {
       (a, b) => b.timestamp.localeCompare(a.timestamp),
     );
     const range = dateRange(examined);
-    const inputPlan = planAnalysisInput(posts, handle, retrieval.eligiblePostCap);
+    const inputPlan = planAnalysisInput(posts, handle, {
+      inputMaxChars: retrieval.inputMaxChars,
+      lookbackCutoffMs: retrieval.lookbackCutoffMs,
+    });
     const baseMeta = {
       postsExamined: examined.length,
       retrievalComplete: retrieval.retrievalComplete,
       retrievalIncompleteReason: retrieval.incompleteReason,
+      fetchStopReason: retrieval.fetchStopReason,
       analysisInput: inputPlan.records,
     };
 

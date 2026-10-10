@@ -9,11 +9,11 @@ import type { DesearchTransport } from "../../src/fetch/desearch/desearchTranspo
 
 const FAKE_CREDENTIAL = "unit-test-only-not-a-secret";
 
-function validApiTweet(id: string, username: string) {
+function validApiTweet(id: string, username: string, created_at = "2026-09-01T12:00:00.000Z") {
   return {
     id,
     text: `Post ${id}`,
-    created_at: "2026-09-01T12:00:00.000Z",
+    created_at,
     url: `https://fixture.x-analyst.local/desearch/${username}/${id}`,
     is_retweet: false,
     is_quote_tweet: false,
@@ -37,7 +37,7 @@ describe("DesearchPostsFetcher", () => {
     );
   });
 
-  it("keeps every post from paid pages and does not request another page after the cap", async () => {
+  it("stops when the oldest post on a page is past the lookback window", async () => {
     let call = 0;
     const transport: DesearchTransport = {
       async execute(request) {
@@ -48,7 +48,10 @@ describe("DesearchPostsFetcher", () => {
           return {
             status: 200,
             body: tweetsBody(
-              [validApiTweet("1", "bullmacro"), validApiTweet("2", "bullmacro")],
+              [
+                validApiTweet("old-id", "bullmacro", "Mon Oct 05 01:00:00 +0000 2026"),
+                validApiTweet("new-id", "bullmacro", "Fri Oct 09 05:35:09 +0000 2026"),
+              ],
               "page-2",
             ),
           };
@@ -56,7 +59,10 @@ describe("DesearchPostsFetcher", () => {
         return {
           status: 200,
           body: tweetsBody(
-            [validApiTweet("3", "bullmacro"), validApiTweet("4", "bullmacro")],
+            [
+              validApiTweet("boundary", "bullmacro", "2026-09-20T00:00:00.000Z"),
+              validApiTweet("past", "bullmacro", "2026-09-01T00:00:00.000Z"),
+            ],
             "page-3",
           ),
         };
@@ -71,19 +77,21 @@ describe("DesearchPostsFetcher", () => {
       maxRequestsPerRun: 10,
     });
 
-    const outcomes = await fetcher.fetchForHandles(["bullmacro"], {
-      maxPostsPerPerson: 3,
-      maxPostsTotal: 10,
-    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 1, maxPostsTotal: 1 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
     assert.equal(call, 2);
     assert.equal(outcomes[0]?.status, "ok");
     if (outcomes[0]?.status === "ok") {
       assert.deepEqual(
         outcomes[0].posts.map((post) => post.id),
-        ["1", "2", "3", "4"],
+        ["new-id", "old-id", "boundary", "past"],
       );
-      assert.equal(outcomes[0].retrievalComplete, false);
-      assert.equal(outcomes[0].incompleteReason, "per_person_limit_reached");
+      assert.equal(outcomes[0].retrievalComplete, true);
+      assert.equal(outcomes[0].incompleteReason, undefined);
+      assert.equal(outcomes[0].fetchStopReason, "lookback_window_reached");
     }
   });
 
@@ -116,17 +124,19 @@ describe("DesearchPostsFetcher", () => {
     if (outcomes[0]?.status === "ok") {
       assert.equal(outcomes[0].retrievalComplete, false);
       assert.equal(outcomes[0].incompleteReason, "desearch_request_budget_exhausted");
+      assert.equal(outcomes[0].fetchStopReason, "desearch_request_budget_exhausted");
     }
   });
 
-  it("does not call transport for later handle after total cap exhausted", async () => {
+  it("still fetches a later handle when the kept post count is already high", async () => {
     let calls = 0;
     const transport: DesearchTransport = {
-      async execute() {
+      async execute(request) {
         calls += 1;
+        const username = new URL(request.url).searchParams.get("username") ?? "bullmacro";
         return {
           status: 200,
-          body: tweetsBody([validApiTweet("1", "bullmacro")]),
+          body: tweetsBody([validApiTweet(`${username}-1`, username)]),
         };
       },
     };
@@ -143,8 +153,12 @@ describe("DesearchPostsFetcher", () => {
       ["bullmacro", "bearmacro"],
       { maxPostsPerPerson: 10, maxPostsTotal: 1 },
     );
-    assert.equal(calls, 1);
-    assert.equal(outcomes[1]?.status, "incomplete");
+    assert.equal(calls, 2);
+    assert.equal(outcomes[0]?.status, "ok");
+    assert.equal(outcomes[1]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].fetchStopReason, "no_more_pages");
+    }
   });
 
   it("skips later handle when request budget already exhausted", async () => {
@@ -210,6 +224,7 @@ describe("DesearchPostsFetcher", () => {
       assert.equal(outcomes[0].posts.length, 4);
       assert.equal(outcomes[0].retrievalComplete, true);
       assert.equal(outcomes[0].incompleteReason, undefined);
+      assert.equal(outcomes[0].fetchStopReason, "no_more_pages");
     }
   });
 

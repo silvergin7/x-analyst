@@ -1,4 +1,5 @@
-import type { DesearchBilling, Post } from "../../types.js";
+import { comparePostTime } from "../../analyze/analysisInput.js";
+import type { DesearchBilling, FetchStopReason, Post } from "../../types.js";
 import { buildTwitterUserPostsRequest } from "./buildRequest.js";
 import {
   DesearchRetrievalError,
@@ -19,62 +20,67 @@ export class DesearchPaginationError extends Error {
 
 export interface FetchHandlePagesResult {
   posts: Post[];
-  /** Latest response had next_cursor but retrieval stopped early (caps or request budget). */
+  stopReason: FetchStopReason;
+  /** Latest response had next_cursor and fetching stopped before that page. */
   apiHasMorePages: boolean;
-  /** Latest response had more tweets than retained after per-person/total caps (no next page required). */
-  truncatedLastResponse: boolean;
-  stoppedDueToCap: boolean;
-  stoppedDueToRequestBudget: boolean;
   requestsUsed: number;
   billing: DesearchBilling[];
 }
 
-function advanceCursor(
-  nextCursor: string,
-  seenCursors: Set<string>,
-): string {
+function advanceCursor(nextCursor: string, seenCursors: Set<string>): string {
   if (seenCursors.has(nextCursor)) {
-    throw new DesearchPaginationError(
-      "Desearch pagination returned a repeated cursor",
-    );
+    throw new DesearchPaginationError("Desearch pagination returned a repeated cursor");
   }
   seenCursors.add(nextCursor);
   return nextCursor;
 }
 
+function oldestParsedMs(posts: readonly Post[]): number | null {
+  let oldest: number | null = null;
+  for (const post of posts) {
+    const ms = Date.parse(post.timestamp);
+    if (!Number.isFinite(ms)) continue;
+    if (oldest === null || ms < oldest) oldest = ms;
+  }
+  return oldest;
+}
+
 /**
- * Paginate until the request budget is spent or kept posts already meet a cap.
- * Every valid post from a response that was fetched is kept.
+ * Paginate until the oldest kept post is past the lookback window, the account
+ * has no further page, or the request budget is used up. Every valid post from
+ * a response that was fetched is kept. Post count is not a stop.
  */
 export async function fetchHandlePages(
   username: string,
   apiKey: string,
   transport: DesearchTransport,
   options: {
-    maxPostsThisHandle: number;
-    remainingTotalCap: number;
     requestBudgetRemaining: number;
+    lookbackCutoffMs: number;
   },
 ): Promise<FetchHandlePagesResult> {
   const collected: Post[] = [];
   let cursor: string | undefined;
-  let stoppedDueToCap = false;
-  let stoppedDueToRequestBudget = false;
+  let stopReason: FetchStopReason = "no_more_pages";
   let lastResponseHasMorePages = false;
-  let truncatedLastResponse = false;
   let requestsUsed = 0;
   const billing: DesearchBilling[] = [];
   const seenCursors = new Set<string>();
 
-  while (collected.length < options.maxPostsThisHandle) {
-    if (options.requestBudgetRemaining - requestsUsed <= 0) {
-      stoppedDueToRequestBudget = true;
-      break;
+  const moveCursor = (nextCursor: string): string => {
+    try {
+      return advanceCursor(nextCursor, seenCursors);
+    } catch (err) {
+      if (err instanceof DesearchPaginationError) {
+        throw new DesearchPaginationError(err.message, billing);
+      }
+      throw err;
     }
+  };
 
-    const remainingTotal = options.remainingTotalCap - collected.length;
-    if (remainingTotal <= 0) {
-      stoppedDueToCap = true;
+  while (true) {
+    if (options.requestBudgetRemaining - requestsUsed <= 0) {
+      stopReason = "desearch_request_budget_exhausted";
       break;
     }
 
@@ -115,56 +121,27 @@ export async function fetchHandlePages(
     }
 
     lastResponseHasMorePages = parsed.hasMorePages;
-
-    if (parsed.posts.length === 0) {
-      if (parsed.hasMorePages && parsed.nextCursor) {
-        cursor = moveCursor(parsed.nextCursor);
-        continue;
-      }
-      break;
-    }
-
-    // Keep every valid post from this paid response. Do not start another page
-    // once the raw slice already meets a retention cap.
     collected.push(...parsed.posts);
-    if (
-      collected.length >= options.maxPostsThisHandle ||
-      collected.length >= options.remainingTotalCap
-    ) {
-      stoppedDueToCap = true;
+
+    const oldest = oldestParsedMs(parsed.posts);
+    if (oldest !== null && oldest < options.lookbackCutoffMs) {
+      stopReason = "lookback_window_reached";
       break;
     }
 
     if (!parsed.hasMorePages || !parsed.nextCursor) {
+      stopReason = "no_more_pages";
       break;
     }
 
     cursor = moveCursor(parsed.nextCursor);
   }
 
-  function moveCursor(nextCursor: string): string {
-    try {
-      return advanceCursor(nextCursor, seenCursors);
-    } catch (err) {
-      if (err instanceof DesearchPaginationError) {
-        throw new DesearchPaginationError(err.message, billing);
-      }
-      throw err;
-    }
-  }
-
-  const apiHasMorePages =
-    lastResponseHasMorePages &&
-    (stoppedDueToCap ||
-      stoppedDueToRequestBudget ||
-      collected.length >= options.maxPostsThisHandle);
-
+  collected.sort((a, b) => comparePostTime(b, a));
   return {
     posts: collected,
-    apiHasMorePages,
-    truncatedLastResponse,
-    stoppedDueToCap,
-    stoppedDueToRequestBudget,
+    stopReason,
+    apiHasMorePages: lastResponseHasMorePages && stopReason !== "no_more_pages",
     requestsUsed,
     billing,
   };

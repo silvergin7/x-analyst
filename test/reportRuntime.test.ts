@@ -15,6 +15,7 @@ function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     DESEARCH_LIVE_ENABLED: "true",
     DESEARCH_API_KEY: "unit-test-only-not-a-secret",
     DESEARCH_MAX_REQUESTS_PER_RUN: "1",
+    LOOKBACK_DAYS: "400",
     ANALYSIS_PROVIDER: "chutes",
     LLM_LIVE_ENABLED: "true",
     CHUTES_API_KEY: "unit-test-only-not-a-secret",
@@ -298,7 +299,7 @@ describe("runReport live gates", () => {
     });
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: desearchEnv({ MAX_POSTS_PER_PERSON: "1" }),
+      env: desearchEnv({ LLM_INPUT_MAX_CHARS: "39" }),
       cache: createFetchSliceCache(),
       desearchTransport: posts.transport,
       chutesTransport: model.transport,
@@ -339,7 +340,7 @@ describe("runReport live gates", () => {
       /Date range of retrieved slice: 2026-09-20T14:00:00.000Z → Fri Oct 09 05:35:09 \+0000 2026/,
     );
     assert.match(text, /repost-1 Mon Oct 05 01:00:00 \+0000 2026 excluded \(repost,/);
-    assert.match(text, /live-1 2026-09-20T14:00:00.000Z excluded \(beyond_analysis_post_cap,/);
+    assert.match(text, /live-1 2026-09-20T14:00:00.000Z excluded \(beyond_input_character_budget,/);
   });
 
   it("returns local unclear and skips Chutes when only an uncommented quote was retrieved", async () => {

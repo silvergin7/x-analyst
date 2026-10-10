@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { planAnalysisInput } from "../src/analyze/analysisInput.js";
+import { formatPersonReport } from "../src/format/report.js";
 import {
   LlmCallError,
   requestChutesCompletion,
@@ -292,21 +293,198 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(report.providerUsage, null);
   });
 
-  it("leaves posts past the analysis cap out of the prompt", () => {
-    const posts = Array.from({ length: 11 }, (_, index) =>
+  it("lists eligible posts that do not fit the character budget", () => {
+    const posts = [
       post({
-        id: `p${index}`,
+        id: "older",
         kind: "original",
-        text: `UNIQUE_${index}`,
-        timestamp: `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+        text: "bbbb",
+        timestamp: "Mon Oct 05 01:00:00 +0000 2026",
       }),
+      post({
+        id: "newer",
+        kind: "original",
+        text: "aaaa",
+        timestamp: "Fri Oct 09 05:35:09 +0000 2026",
+      }),
+      post({
+        id: "noise-repost",
+        kind: "repost",
+        text: "not eligible",
+        timestamp: "2026-10-08T00:00:00.000Z",
+      }),
+    ];
+    const plan = planAnalysisInput(posts, "analyst", { inputMaxChars: 4 });
+    assert.deepEqual(
+      plan.records.map((record) => record.postId),
+      ["newer", "noise-repost", "older"],
     );
-    const plan = planAnalysisInput(posts, "analyst");
-    const excluded = plan.records.find((record) => record.postId === "p0");
+    assert.equal(plan.sent.length, 1);
+    assert.equal(plan.sent[0]?.post.id, "newer");
+    const excluded = plan.records.find((record) => record.postId === "older");
     assert.equal(excluded?.disposition, "excluded");
-    assert.equal(excluded?.reason, "beyond_analysis_post_cap");
-    assert.equal(plan.sent.some((item) => item.text.includes("UNIQUE_0")), false);
-    assert.equal(plan.sent.length, 10);
+    assert.equal(excluded?.reason, "beyond_input_character_budget");
+    assert.equal(plan.records.find((record) => record.postId === "noise-repost")?.reason, "repost");
+  });
+
+  it("orders posts by parsed time, newest first", () => {
+    const plan = planAnalysisInput(
+      [
+        post({
+          id: "a",
+          kind: "original",
+          text: "older",
+          timestamp: "Sat Oct 03 00:00:00 +0000 2026",
+        }),
+        post({
+          id: "z",
+          kind: "original",
+          text: "newer",
+          timestamp: "Fri Oct 09 00:00:00 +0000 2026",
+        }),
+      ],
+      "analyst",
+    );
+    assert.deepEqual(
+      plan.records.map((record) => record.postId),
+      ["z", "a"],
+    );
+    const windowed = planAnalysisInput(
+      [
+        post({
+          id: "inside",
+          kind: "original",
+          text: "inside the window",
+          timestamp: "2026-09-10T00:00:00.000Z",
+        }),
+        post({
+          id: "outside",
+          kind: "original",
+          text: "before the window",
+          timestamp: "2026-09-09T23:59:59.000Z",
+        }),
+      ],
+      "analyst",
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.deepEqual(windowed.sent.map((item) => item.post.id), ["inside"]);
+    assert.equal(
+      windowed.records.find((record) => record.postId === "outside")?.reason,
+      "outside_lookback_window",
+    );
+  });
+
+  it("validates citations from a noisy slice that has two relevant posts", async () => {
+    const noise = ["pasta", "hiking", "playlist", "weather", "birthday", "garden"];
+    const posts = [
+      ...noise.map((topic, index) =>
+        post({
+          id: `noise-${index}`,
+          kind: "original" as const,
+          text: `Today I enjoyed ${topic}.`,
+          timestamp: `2026-10-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+        }),
+      ),
+      post({
+        id: "rates",
+        kind: "original",
+        text: "Real yields still look too high for risk assets.",
+        timestamp: "2026-10-08T12:00:00.000Z",
+      }),
+      post({
+        id: "payrolls",
+        kind: "original",
+        text: "Soft payrolls would make me less bearish on duration.",
+        timestamp: "2026-10-09T12:00:00.000Z",
+      }),
+      post({
+        id: "repost-1",
+        kind: "repost",
+        text: "Someone else's market note.",
+        timestamp: "2026-10-09T18:00:00.000Z",
+      }),
+    ];
+    const recorded = recordingTransport(completion({
+      outlook: "cautious",
+      explanation: "The two market posts are cautious. The other posts are unrelated.",
+      evidencePostIds: ["payrolls", "rates"],
+    }));
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
+    const report = await analyzer.analyzePerson("analyst", posts, question, complete);
+    assert.deepEqual(
+      report.evidence.map((item) => item.postId),
+      ["payrolls", "rates"],
+    );
+    assert.equal(report.relevantPostCount, 2);
+    assert.equal(report.eligiblePostCount, 8);
+    assert.equal(report.newestRelevantPostAt, "2026-10-09T12:00:00.000Z");
+    assert.equal(report.viewMayBeStale, false);
+    const sentIds = new Set(report.analysisInput?.filter((record) => record.sentChars > 0).map((record) => record.postId));
+    for (const item of report.evidence) {
+      assert.equal(sentIds.has(item.postId), true);
+    }
+    const rejected = recordingTransport(completion({
+      outlook: "cautious",
+      explanation: "Cited a post that was not sent.",
+      evidencePostIds: ["repost-1"],
+    }));
+    const rejecting = new LlmOutlookAnalyzer(liveConfig(), rejected.transport, "2026-10-10");
+    await assert.rejects(
+      () => rejecting.analyzePerson("analyst", posts, question, complete),
+      (err: unknown) => err instanceof LlmCitationError,
+    );
+  });
+
+  it("warns when the newest relevant post is older than 14 days and shows text excerpts", async () => {
+    const commentary = `Duration still looks attractive if growth cools. ${"c".repeat(80)}`;
+    const quoted = `Quoted account says something else entirely. ${"q".repeat(80)}`;
+    const posts = [
+      post({
+        id: "old-view",
+        kind: "quote",
+        text: "timeline text that is not the commentary",
+        analystComment: commentary,
+        quotedPostText: quoted,
+        timestamp: "2026-09-01T00:00:00.000Z",
+      }),
+      post({
+        id: "fresh-noise",
+        kind: "original",
+        text: "Photos from a walk.",
+        timestamp: "2026-10-09T00:00:00.000Z",
+      }),
+    ];
+    const recorded = recordingTransport(completion({
+      outlook: "cautious",
+      explanation: "The only market post is an older comment on duration.",
+      evidencePostIds: ["old-view"],
+    }));
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
+    const report = await analyzer.analyzePerson("analyst", posts, question, {
+      retrievalComplete: true,
+      fetchStopReason: "lookback_window_reached",
+    });
+    assert.equal(report.viewMayBeStale, true);
+    assert.equal(report.newestRelevantPostAt, "2026-09-01T00:00:00.000Z");
+    assert.equal(report.relevantPostCount, 1);
+    assert.equal(report.eligiblePostCount, 2);
+    const sent = report.analysisInput?.find((record) => record.postId === "old-view");
+    assert.equal(sent?.sentExcerpt, commentary.slice(0, 100));
+    assert.equal(sent?.sentExcerpt?.length, 100);
+    assert.equal(sent?.quotedPostExcerpt, quoted.slice(0, 100));
+    assert.equal(sent?.quotedPostExcerpt?.length, 100);
+    assert.equal(report.analysisInput?.[0]?.postId, "fresh-noise");
+    const text = formatPersonReport(report);
+    assert.match(text, /Relevant posts: 1 of 2 eligible/);
+    assert.match(text, /Newest relevant post: 2026-09-01T00:00:00.000Z/);
+    assert.match(text, /The newest relevant post is older than 14 days\. The view may be stale\./);
+    assert.match(text, /Sent text: Duration still looks attractive/);
+    assert.match(text, /Quoted post text: Quoted account says something else entirely/);
+    assert.match(text, /Fetch stopped: oldest post is past the lookback window/);
+    assert.equal(text.includes(`Sent text: ${commentary.slice(0, 100)}`), true);
+    assert.equal(text.includes(`Quoted post text: ${quoted.slice(0, 100)}`), true);
+    assert.equal(text.includes(commentary), false);
+    assert.equal(text.includes(quoted), false);
   });
 
   it("sends sarcasm, conflict, staleness, and interpretation rules with the reference date", async () => {
@@ -325,6 +503,9 @@ describe("LlmOutlookAnalyzer", () => {
     const prompt = (JSON.parse(recorded.calls[0]!.body) as {
       messages: { content: string }[];
     }).messages.map((message) => message.content).join("\n");
+    assert.match(prompt, /markets, the economy, assets, or risk/);
+    assert.match(prompt, /too few relevant posts/);
+    assert.match(prompt, /Supplied posts, newest first/);
     assert.match(prompt, /Analysis reference date: 2026-09-22/);
     assert.match(prompt, /sarcasm/);
     assert.match(prompt, /conditional views/);

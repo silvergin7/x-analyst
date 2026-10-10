@@ -5,13 +5,8 @@ import {
   type DesearchSettings,
 } from "../../config/desearchSettings.js";
 import { validateHandle } from "../../validation/handles.js";
-import type {
-  DesearchBilling,
-  FetchIncompleteReason,
-  FetchLimits,
-  FetchOutcome,
-} from "../../types.js";
-import type { PostsFetcher } from "../postsFetcher.js";
+import type { DesearchBilling, FetchLimits, FetchOutcome } from "../../types.js";
+import type { FetchWindow, PostsFetcher } from "../postsFetcher.js";
 import { DesearchPaginationError, fetchHandlePages } from "./fetchHandlePages.js";
 import {
   DesearchRetrievalError,
@@ -73,10 +68,11 @@ export class DesearchPostsFetcher implements PostsFetcher {
 
   async fetchForHandles(
     handles: string[],
-    limits: FetchLimits,
+    _limits: FetchLimits,
+    window?: FetchWindow,
   ): Promise<FetchOutcome[]> {
     const outcomes: FetchOutcome[] = [];
-    let remainingTotal = limits.maxPostsTotal;
+    const lookbackCutoffMs = window?.lookbackCutoffMs ?? Number.NEGATIVE_INFINITY;
     let requestBudgetRemaining = this.maxRequestsPerRun;
 
     for (const raw of handles) {
@@ -92,15 +88,6 @@ export class DesearchPostsFetcher implements PostsFetcher {
 
       const handle = validation.normalized;
 
-      if (remainingTotal <= 0) {
-        outcomes.push({
-          status: "incomplete",
-          handle,
-          reason: "total_post_limit_reached",
-        });
-        continue;
-      }
-
       if (requestBudgetRemaining <= 0) {
         outcomes.push({
           status: "incomplete",
@@ -110,8 +97,6 @@ export class DesearchPostsFetcher implements PostsFetcher {
         continue;
       }
 
-      const maxPostsThisHandle = Math.min(limits.maxPostsPerPerson, remainingTotal);
-
       let pageResult: Awaited<ReturnType<typeof fetchHandlePages>>;
       try {
         pageResult = await fetchHandlePages(
@@ -119,9 +104,8 @@ export class DesearchPostsFetcher implements PostsFetcher {
           this.credential,
           this.transport,
           {
-            maxPostsThisHandle,
-            remainingTotalCap: remainingTotal,
             requestBudgetRemaining,
+            lookbackCutoffMs,
           },
         );
       } catch (err) {
@@ -145,7 +129,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
       requestBudgetRemaining -= pageResult.requestsUsed;
 
       if (pageResult.posts.length === 0) {
-        if (pageResult.apiHasMorePages || pageResult.stoppedDueToRequestBudget) {
+        if (pageResult.stopReason === "desearch_request_budget_exhausted") {
           outcomes.push(
             withBilling(
               {
@@ -162,31 +146,23 @@ export class DesearchPostsFetcher implements PostsFetcher {
         continue;
       }
 
-      const posts = pageResult.posts;
-      let incompleteReason: FetchIncompleteReason | undefined;
-      if (pageResult.apiHasMorePages) {
-        if (pageResult.stoppedDueToRequestBudget) {
-          incompleteReason = "desearch_request_budget_exhausted";
-        } else if (posts.length >= limits.maxPostsPerPerson) {
-          incompleteReason = "per_person_limit_reached";
-        } else {
-          incompleteReason = "total_post_limit_reached";
-        }
-      }
+      const retrievalComplete =
+        pageResult.stopReason !== "desearch_request_budget_exhausted";
       outcomes.push(
         withBilling(
           {
             status: "ok",
             handle,
-            posts,
-            retrievalComplete: incompleteReason === undefined,
-            incompleteReason,
+            posts: pageResult.posts,
+            retrievalComplete,
+            incompleteReason: retrievalComplete
+              ? undefined
+              : "desearch_request_budget_exhausted",
+            fetchStopReason: pageResult.stopReason,
           },
           pageResult.billing,
         ),
       );
-
-      remainingTotal = Math.max(0, remainingTotal - posts.length);
     }
 
     return outcomes;

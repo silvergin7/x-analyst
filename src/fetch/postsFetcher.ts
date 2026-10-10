@@ -3,10 +3,16 @@ import { validateHandle } from "../validation/handles.js";
 import type { FetchLimits, FetchOutcome } from "../types.js";
 import { outcomeFromRetrievedPosts } from "./limitEnforcement.js";
 
+/** Lookback cutoff for a Desearch fetch. Mock retrieval ignores it. */
+export interface FetchWindow {
+  lookbackCutoffMs: number;
+}
+
 export interface PostsFetcher {
   fetchForHandles(
     handles: string[],
     limits: FetchLimits,
+    window?: FetchWindow,
   ): Promise<FetchOutcome[]>;
 }
 

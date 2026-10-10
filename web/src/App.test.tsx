@@ -238,6 +238,51 @@ describe("mock analyze form", () => {
     expect(card.textContent).toContain("Outlook: bullish");
   });
 
+  it("shows sent excerpts, quoted text, and a stale relevant post", async () => {
+    const user = userEvent.setup();
+    installFetch(() =>
+      jsonResponse(
+        200,
+        successBody([
+          {
+            ...evidenceReport,
+            eligiblePostCount: 2,
+            relevantPostCount: 1,
+            newestRelevantPostAt: "2026-09-01T00:00:00.000Z",
+            viewMayBeStale: true,
+            fetchStopReason: "lookback_window_reached",
+            analysisInput: [
+              {
+                postId: "q1",
+                timestamp: "2026-09-01T00:00:00.000Z",
+                disposition: "sent",
+                reason: "quote_commentary",
+                originalChars: 120,
+                sentChars: 120,
+                sentExcerpt: "Duration still looks attractive if growth cools.",
+                quotedPostExcerpt: "Quoted account says something else entirely.",
+              },
+            ],
+          },
+        ]),
+      ),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: "Analyze" });
+    await user.click(screen.getByRole("button", { name: "Analyze" }));
+    const card = await screen.findByRole("article", { name: "@bullmacro" });
+    expect(card.textContent).toContain("Relevant posts: 1 of 2 eligible");
+    expect(card.textContent).toContain("Newest relevant post: 2026-09-01T00:00:00.000Z");
+    expect(card.textContent).toContain(
+      "The newest relevant post is older than 14 days. The view may be stale.",
+    );
+    expect(card.textContent).toContain("Fetch stopped: oldest post is past the lookback window");
+    expect(card.textContent).toContain("Sent text: Duration still looks attractive if growth cools.");
+    expect(card.textContent).toContain(
+      "Quoted post text: Quoted account says something else entirely.",
+    );
+  });
+
   it("sends one analyze request while a submission is pending", async () => {
     const user = userEvent.setup();
     let release: (response: Response) => void = () => {};

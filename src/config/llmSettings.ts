@@ -22,7 +22,8 @@ export const LLM_CALL_BUDGET_USD = 0.05;
 /** Documented Chutes generation cap field value (`max_tokens`, not max_completion_tokens). */
 export const LLM_MAX_OUTPUT_TOKENS = 800;
 
-export const LLM_MAX_ELIGIBLE_POSTS = 10;
+/** Total characters of eligible post text sent to the model. Not a post-count cap. */
+export const LLM_INPUT_MAX_CHARS = 20_000;
 export const LLM_MAX_POST_CHARS = 1000;
 export const LLM_MAX_QUESTION_CHARS = 500;
 export const LLM_MAX_EXPLANATION_CHARS = 1500;
@@ -85,6 +86,15 @@ export interface LlmRuntimeConfig {
 
 function readEnv(env: NodeJS.ProcessEnv, name: string): string {
   return env[name]?.trim() ?? "";
+}
+
+/** Character budget for posts sent to the model. Malformed values use the default. */
+export function loadInputMaxChars(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = readEnv(env, "LLM_INPUT_MAX_CHARS");
+  if (raw === "" || !/^\d+$/.test(raw)) return LLM_INPUT_MAX_CHARS;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(n) || n < 1) return LLM_INPUT_MAX_CHARS;
+  return n;
 }
 
 /** Resolve opt-in Chutes gates. Missing or mock provider is not eligible. */

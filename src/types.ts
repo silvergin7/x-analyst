@@ -35,6 +35,15 @@ export type FetchIncompleteReason =
   | "per_person_limit_reached"
   | "desearch_request_budget_exhausted";
 
+/**
+ * Why Desearch stopped requesting another page for one handle.
+ * The request budget is the only one of these that leaves retrieval incomplete.
+ */
+export type FetchStopReason =
+  | "lookback_window_reached"
+  | "no_more_pages"
+  | "desearch_request_budget_exhausted";
+
 export type PostSource = "fixtures" | "desearch";
 
 export type AnalysisProviderLabel = "mock-rules" | "chutes";
@@ -54,6 +63,8 @@ type FetchOutcomeShape =
       posts: Post[];
       retrievalComplete: boolean;
       incompleteReason?: FetchIncompleteReason;
+      /** Exact reason the last page request stopped. Present for Desearch slices. */
+      fetchStopReason?: FetchStopReason;
     }
   | {
       status: "incomplete";
@@ -85,11 +96,11 @@ export interface EvidenceRef {
 export interface RetrievalContext {
   retrievalComplete: boolean;
   incompleteReason?: FetchIncompleteReason;
-  /**
-   * How many eligible posts may be sent. Defaults to the model cap of 10.
-   * Reposts do not consume it.
-   */
-  eligiblePostCap?: number;
+  fetchStopReason?: FetchStopReason;
+  /** When set, posts older than this instant are outside the lookback window. */
+  lookbackCutoffMs?: number;
+  /** Total characters of eligible post text that may be sent. */
+  inputMaxChars?: number;
 }
 
 export interface PersonOutlookReport {
@@ -120,6 +131,15 @@ export interface PersonOutlookReport {
   budgetEstimate?: BudgetEstimate;
   /** UTC date the opt-in analyzer used for the word "current". */
   analysisReferenceDate?: string;
+  /** Eligible posts in the window, including those that did not fit the character budget. */
+  eligiblePostCount?: number;
+  /** Cited posts that were actually sent and passed citation checks. */
+  relevantPostCount?: number;
+  /** Timestamp of the newest cited relevant post. */
+  newestRelevantPostAt?: string;
+  /** True when that newest relevant post is older than 14 days before the reference date. */
+  viewMayBeStale?: boolean;
+  fetchStopReason?: FetchStopReason;
 }
 
 /** One retrieved post as included, truncated, or left out of model input. */
@@ -131,6 +151,10 @@ export interface AnalysisInputRecord {
   reason: string;
   originalChars: number;
   sentChars: number;
+  /** First 100 characters of the text actually sent. Present on sent and truncated posts. */
+  sentExcerpt?: string;
+  /** First 100 characters of Desearch `quote.text`. Present on sent quotes when that field was a string. */
+  quotedPostExcerpt?: string;
 }
 
 /** Token counts reported by the provider after a completed call. */

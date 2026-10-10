@@ -1,3 +1,4 @@
+import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
 import type { ReportFailureDetails } from "../runReport.js";
 import { formatProviderUsage } from "./llmFixtureReport.js";
 import type {
@@ -38,17 +39,27 @@ export function formatFetchIssue(
         `  [!] Incomplete retrieval for "@${outcome.handle}": ${outcome.reason} — ` +
         "analyst was not examined (no outlook inferred)"
       );
-    case "ok":
+    case "ok": {
+      const stop = outcome.fetchStopReason
+        ? `Fetch stopped: ${FETCH_STOP_LABEL[outcome.fetchStopReason]}`
+        : "";
       if (!outcome.retrievalComplete && outcome.incompleteReason) {
         const label =
           INCOMPLETE_REASON_LABEL[outcome.incompleteReason] ??
           outcome.incompleteReason;
-        return (
+        const partial =
           `  [~] Partial retrieval for "@${outcome.handle}": ${label} ` +
+          `(${outcome.posts.length} post(s) retrieved)`;
+        return stop === "" ? partial : `${partial}\n  ${stop}`;
+      }
+      if (stop !== "") {
+        return (
+          `  [ok] "@${outcome.handle}": ${stop} ` +
           `(${outcome.posts.length} post(s) retrieved)`
         );
       }
       return "";
+    }
   }
 }
 
@@ -63,6 +74,25 @@ export function formatPersonReport(report: PersonOutlookReport): string {
     lines.push(`  Outlook: ${report.outlook} (source: ${report.analysisSource} rules, not LLM)`);
   }
   lines.push(`  Posts examined: ${report.postsExamined}`);
+  if (
+    report.eligiblePostCount !== undefined &&
+    report.relevantPostCount !== undefined
+  ) {
+    lines.push(
+      `  Relevant posts: ${report.relevantPostCount} of ${report.eligiblePostCount} eligible`,
+    );
+  }
+  if (report.newestRelevantPostAt) {
+    lines.push(`  Newest relevant post: ${report.newestRelevantPostAt}`);
+  }
+  if (report.viewMayBeStale) {
+    lines.push(
+      `  The newest relevant post is older than ${STALE_RELEVANT_POST_DAYS} days. The view may be stale.`,
+    );
+  }
+  if (report.fetchStopReason) {
+    lines.push(`  Fetch stopped: ${FETCH_STOP_LABEL[report.fetchStopReason]}`);
+  }
   if (!report.retrievalComplete && report.retrievalIncompleteReason) {
     const label =
       INCOMPLETE_REASON_LABEL[report.retrievalIncompleteReason] ??
@@ -95,6 +125,12 @@ export function formatPersonReport(report: PersonOutlookReport): string {
       lines.push(
         `    - ${record.postId} ${record.timestamp} ${record.disposition} (${record.reason}, ${record.originalChars} -> ${record.sentChars})`,
       );
+      if (record.sentExcerpt !== undefined) {
+        lines.push(`      Sent text: ${record.sentExcerpt}`);
+      }
+      if (record.quotedPostExcerpt !== undefined) {
+        lines.push(`      Quoted post text: ${record.quotedPostExcerpt}`);
+      }
     }
   }
   if (report.analysisSource === "llm") {

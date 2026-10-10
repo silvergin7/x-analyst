@@ -6,17 +6,18 @@ import {
   LlmOutputError,
 } from "./analyze/llmOutlookAnalyzer.js";
 import { MockOutlookAnalyzer } from "./analyze/outlookAnalyzer.js";
-import { loadFetchLimits } from "./config.js";
+import { loadFetchLimits, loadLookbackDays } from "./config.js";
 import {
   loadDesearchRequestBudget,
   loadDesearchSettings,
 } from "./config/desearchSettings.js";
 import {
-  LLM_MAX_ELIGIBLE_POSTS,
   LLM_MAX_QUESTION_CHARS,
+  loadInputMaxChars,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
 } from "./config/llmSettings.js";
+import { lookbackCutoffMs } from "./config/timeWindow.js";
 import { loadPostsProviderConfig } from "./config/postsProvider.js";
 import { DesearchNotConfiguredError } from "./fetch/desearch/desearchPostsFetcher.js";
 import { DesearchPaginationError } from "./fetch/desearch/fetchHandlePages.js";
@@ -161,6 +162,9 @@ export async function runReport(
   }
 
   const limits = loadFetchLimits(env);
+  const lookbackDays = loadLookbackDays(env);
+  const cutoffMs = lookbackCutoffMs(referenceDate, lookbackDays);
+  const inputMaxChars = loadInputMaxChars(env);
   const maxRequestsPerRun = loadDesearchRequestBudget(env);
   const cache = options.cache ?? sharedFetchSliceCache;
   const key = fetchCacheKey({
@@ -169,6 +173,8 @@ export async function runReport(
     maxPostsPerPerson: limits.maxPostsPerPerson,
     maxPostsTotal: limits.maxPostsTotal,
     maxRequestsPerRun,
+    lookbackDays,
+    referenceDate,
   });
 
   let fetchOutcomes: FetchOutcome[];
@@ -224,7 +230,11 @@ export async function runReport(
         transport: options.desearchTransport,
         ineligibleDesearch: "throw",
       });
-      outcomes = await fetcher.fetchForHandles(handles, limits);
+      outcomes = await fetcher.fetchForHandles(
+        handles,
+        limits,
+        postsSource === "desearch" ? { lookbackCutoffMs: cutoffMs } : undefined,
+      );
     } catch (err) {
       throw retrievalFailure(err);
     }
@@ -273,7 +283,9 @@ export async function runReport(
         const report = await analyzer.analyzePerson(outcome.handle, outcome.posts, question, {
           retrievalComplete: outcome.retrievalComplete,
           incompleteReason: outcome.incompleteReason,
-          eligiblePostCap: Math.min(limits.maxPostsPerPerson, LLM_MAX_ELIGIBLE_POSTS),
+          fetchStopReason: outcome.fetchStopReason,
+          lookbackCutoffMs: postsSource === "desearch" ? cutoffMs : undefined,
+          inputMaxChars,
         });
         if (report.providerUsage) providerUsages.push(report.providerUsage);
         reports.push(report);

@@ -1,8 +1,9 @@
-import {
-  LLM_MAX_ELIGIBLE_POSTS,
-  LLM_MAX_POST_CHARS,
-} from "../config/llmSettings.js";
+import { LLM_INPUT_MAX_CHARS, LLM_MAX_POST_CHARS } from "../config/llmSettings.js";
 import type { AnalysisInputRecord, Post } from "../types.js";
+
+export const SENT_TEXT_EXCERPT_CHARS = 100;
+export const BEYOND_INPUT_BUDGET_REASON = "beyond_input_character_budget";
+export const OUTSIDE_LOOKBACK_REASON = "outside_lookback_window";
 
 export interface SentPost {
   post: Post;
@@ -16,14 +17,29 @@ export interface AnalysisInputPlan {
   sent: SentPost[];
 }
 
+export interface AnalysisInputOptions {
+  inputMaxChars?: number;
+  lookbackCutoffMs?: number;
+}
+
 /** Chronological order. Falls back to the raw timestamp string when parsing fails. */
 export function comparePostTime(a: Post, b: Post): number {
-  const aMs = Date.parse(a.timestamp);
-  const bMs = Date.parse(b.timestamp);
+  return compareTimestamp(a.timestamp, a.id, b.timestamp, b.id);
+}
+
+/** Chronological order for a timestamp plus a stable id tie-break. */
+export function compareTimestamp(
+  aTimestamp: string,
+  aId: string,
+  bTimestamp: string,
+  bId: string,
+): number {
+  const aMs = Date.parse(aTimestamp);
+  const bMs = Date.parse(bTimestamp);
   const aOk = Number.isFinite(aMs);
   const bOk = Number.isFinite(bMs);
   if (aOk && bOk && aMs !== bMs) return aMs - bMs;
-  return a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id);
+  return aTimestamp.localeCompare(bTimestamp) || aId.localeCompare(bId);
 }
 
 function eligibleText(post: Post): string | null {
@@ -43,88 +59,83 @@ function exclusionReason(post: Post): string {
   return "ineligible_post";
 }
 
+function excerpt(text: string): string {
+  return text.slice(0, SENT_TEXT_EXCERPT_CHARS);
+}
+
+function countedChars(post: Post): number {
+  if (post.kind === "quote") return (post.analystComment ?? "").length;
+  return post.text.length;
+}
+
+function excluded(
+  post: Post,
+  reason: string,
+  originalChars: number,
+): AnalysisInputRecord {
+  return {
+    postId: post.id,
+    timestamp: post.timestamp,
+    disposition: "excluded",
+    reason,
+    originalChars,
+    sentChars: 0,
+  };
+}
+
+function pastLookback(post: Post, cutoffMs: number | undefined): boolean {
+  if (cutoffMs === undefined) return false;
+  const ms = Date.parse(post.timestamp);
+  return Number.isFinite(ms) && ms < cutoffMs;
+}
+
 /**
  * Choose model input from a retrieved slice.
- * Original posts send their own text. Quotes send only non-empty analyst commentary.
- * Reposts, quotes without commentary, and posts with both retweet and quote
- * flags are excluded. At most `eligibleCap` eligible posts, most recent first,
- * are sent. The cap never exceeds the model limit of 10.
+ * Posts are ordered by parsed timestamp, newest first.
+ * Originals and quotes with commentary inside the lookback window are eligible.
+ * Each post is cut at 1,000 characters. Eligible posts are sent until the
+ * character budget is used up. A post that does not fit, and every later
+ * eligible post, is listed as excluded.
  */
 export function planAnalysisInput(
   posts: Post[],
   handle: string,
-  eligibleCap: number = LLM_MAX_ELIGIBLE_POSTS,
+  options: AnalysisInputOptions = {},
 ): AnalysisInputPlan {
-  const cap =
-    Number.isSafeInteger(eligibleCap) && eligibleCap >= 1
-      ? Math.min(eligibleCap, LLM_MAX_ELIGIBLE_POSTS)
-      : LLM_MAX_ELIGIBLE_POSTS;
-  const eligible: { post: Post; text: string }[] = [];
-  const ineligible = new Set<string>();
-
-  for (const post of posts) {
-    if (post.authorHandle !== handle) {
-      ineligible.add(post.id);
-      continue;
-    }
-    const text = eligibleText(post);
-    if (text === null) {
-      ineligible.add(post.id);
-      continue;
-    }
-    eligible.push({ post, text });
-  }
-
-  eligible.sort((a, b) => comparePostTime(b.post, a.post));
-  const kept = new Set(eligible.slice(0, cap).map((item) => item.post.id));
-  const textById = new Map(eligible.map((item) => [item.post.id, item.text]));
-
+  const budget =
+    options.inputMaxChars !== undefined &&
+    Number.isSafeInteger(options.inputMaxChars) &&
+    options.inputMaxChars >= 1
+      ? options.inputMaxChars
+      : LLM_INPUT_MAX_CHARS;
+  const ordered = [...posts].sort((a, b) => comparePostTime(b, a));
   const records: AnalysisInputRecord[] = [];
   const sent: SentPost[] = [];
+  let used = 0;
+  let budgetClosed = false;
 
-  for (const post of posts) {
+  for (const post of ordered) {
     if (post.authorHandle !== handle) {
-      records.push({
-        postId: post.id,
-        timestamp: post.timestamp,
-        disposition: "excluded",
-        reason: "author_mismatch",
-        originalChars: post.text.length,
-        sentChars: 0,
-      });
+      records.push(excluded(post, "author_mismatch", post.text.length));
       continue;
     }
-    if (ineligible.has(post.id)) {
-      const originalChars =
-        post.kind === "quote"
-          ? (post.analystComment ?? "").length
-          : post.text.length;
-      records.push({
-        postId: post.id,
-        timestamp: post.timestamp,
-        disposition: "excluded",
-        reason: exclusionReason(post),
-        originalChars,
-        sentChars: 0,
-      });
+    if (pastLookback(post, options.lookbackCutoffMs)) {
+      records.push(excluded(post, OUTSIDE_LOOKBACK_REASON, countedChars(post)));
       continue;
     }
-    if (!kept.has(post.id)) {
-      const text = textById.get(post.id) ?? "";
-      records.push({
-        postId: post.id,
-        timestamp: post.timestamp,
-        disposition: "excluded",
-        reason: "beyond_analysis_post_cap",
-        originalChars: text.length,
-        sentChars: 0,
-      });
+    const full = eligibleText(post);
+    if (full === null) {
+      records.push(excluded(post, exclusionReason(post), countedChars(post)));
       continue;
     }
-
-    const full = textById.get(post.id) ?? "";
     const truncated = full.length > LLM_MAX_POST_CHARS;
     const text = truncated ? full.slice(0, LLM_MAX_POST_CHARS) : full;
+    if (budgetClosed || used + text.length > budget) {
+      budgetClosed = true;
+      records.push(excluded(post, BEYOND_INPUT_BUDGET_REASON, full.length));
+      continue;
+    }
+    used += text.length;
     const quote = post.kind === "quote";
     records.push({
       postId: post.id,
@@ -139,6 +150,10 @@ export function planAnalysisInput(
           : "original",
       originalChars: full.length,
       sentChars: text.length,
+      sentExcerpt: excerpt(text),
+      ...(quote && typeof post.quotedPostText === "string"
+        ? { quotedPostExcerpt: excerpt(post.quotedPostText) }
+        : {}),
     });
     sent.push({ post, text, originalChars: full.length, truncated });
   }
