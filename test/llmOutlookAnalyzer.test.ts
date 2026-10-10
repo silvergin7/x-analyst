@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { planAnalysisInput } from "../src/analyze/analysisInput.js";
+import {
+  BEYOND_CONTEXT_WINDOW_REASON,
+  planAnalysisInput,
+} from "../src/analyze/analysisInput.js";
+import { fitAnalysisInputToContextWindow } from "../src/analyze/fitContextWindow.js";
 import {
   buildChatMessages,
   buildChutesRequestBody,
@@ -19,6 +23,7 @@ import {
   LLM_CALL_BUDGET_USD,
   LLM_INPUT_MAX_CHARS,
   PRICED_LLM_MODEL,
+  fitsModelContextWindow,
   loadLlmRuntimeConfig,
 } from "../src/config/llmSettings.js";
 import { runReport } from "../src/runReport.js";
@@ -257,6 +262,107 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(invalid.calls.length, 1);
   });
 
+  it("rejects a request that passes the dollar check but exceeds the context window", async () => {
+    const recorded = recordingTransport();
+    await assert.rejects(
+      () =>
+        requestChutesCompletion(
+          liveConfig(),
+          [
+            { role: "system", content: "/no_think" },
+            { role: "user", content: "short" },
+          ],
+          recorded.transport,
+          40_000,
+        ),
+      (err: unknown) => err instanceof LlmCallError && err.code === "context_window",
+    );
+    assert.equal(recorded.calls.length, 0);
+  });
+
+  it("drops the oldest eligible posts until the request fits the context window", async () => {
+    const ordinary = "Risk assets can still reprice if growth cools from here.";
+    const posts = [
+      post({
+        id: "repost-mid",
+        kind: "repost",
+        text: "Someone else's post that stays a repost.",
+        timestamp: "2026-10-05T00:00:00.000Z",
+      }),
+      ...Array.from({ length: 120 }, (_, index) =>
+        post({
+          id: `p-${String(index).padStart(3, "0")}`,
+          kind: "original" as const,
+          text: ordinary,
+          timestamp: new Date(Date.UTC(2026, 8, 1, 0, index)).toISOString(),
+        }),
+      ),
+    ];
+    const planned = planAnalysisInput(posts, "analyst");
+    const fitted = fitAnalysisInputToContextWindow(planned, {
+      question: question.text,
+      referenceDate: "2026-10-10",
+      postSource: "desearch",
+    });
+    const dropped = fitted.records.filter(
+      (record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON,
+    );
+    assert.ok(dropped.length > 0);
+    assert.ok(fitted.sent.length > 0);
+    assert.equal(
+      fitted.records.find((record) => record.postId === "repost-mid")?.reason,
+      "repost",
+    );
+    const oldestSent = [...fitted.sent].sort((a, b) =>
+      a.post.timestamp < b.post.timestamp ? -1 : 1,
+    )[0]!;
+    for (const record of dropped) {
+      assert.equal(record.disposition, "excluded");
+      assert.ok(record.timestamp < oldestSent.post.timestamp);
+    }
+    const maxTokens = classificationOutputTokenCeiling(fitted.sent.length);
+    const estimate = estimateRequestBudget(
+      buildChutesRequestBody(
+        buildChatMessages(question.text, fitted.sent, "2026-10-10", "desearch"),
+        PRICED_LLM_MODEL,
+        maxTokens,
+      ),
+    );
+    assert.equal(fitsModelContextWindow(estimate.inputTokensUpper, maxTokens), true);
+    assert.ok(estimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
+
+    const recorded = recordingTransport(completion(classifiedOutlook({
+      outlook: "unclear",
+      explanation: "The remaining posts do not support a stance.",
+      posts: fitted.sent.map((item) => ({ postId: item.post.id, relevant: false })),
+    })));
+    const analyzer = new LlmOutlookAnalyzer(
+      liveConfig(),
+      recorded.transport,
+      "2026-10-10",
+      "desearch",
+    );
+    const report = await analyzer.analyzePerson("analyst", posts, question, complete);
+    assert.equal(recorded.calls.length, 1);
+    const body = JSON.parse(recorded.calls[0]!.body) as {
+      max_tokens: number;
+      messages: { content: string }[];
+    };
+    assert.equal(body.max_tokens, maxTokens);
+    const prompt = body.messages.map((message) => message.content).join("\n");
+    for (const record of dropped) {
+      assert.equal(prompt.includes(`postId: ${record.postId}`), false);
+    }
+    assert.match(prompt, new RegExp(`postId: ${fitted.sent[0]!.post.id}`));
+    assert.equal(
+      report.analysisInput?.filter((record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON)
+        .length,
+      dropped.length,
+    );
+    assert.equal(report.postsExamined, fitted.sent.length);
+    assert.equal(report.modelInvoked, true);
+  });
+
   it("rejects an over-budget request before any HTTP call", async () => {
     const recorded = recordingTransport();
     const messages = [
@@ -288,6 +394,42 @@ describe("LlmOutlookAnalyzer", () => {
     );
     assert.equal(modestPlan.sent.length, 60);
     assert.ok(modestEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
+    assert.equal(fitsModelContextWindow(modestEstimate.inputTokensUpper, modestEstimate.outputTokensUpper), true);
+
+    const ordinaryCases = [31, 48, 56, 60] as const;
+    const expected = {
+      31: { input: 9259, output: 9759, usd: 0.005023 },
+      48: { input: 12252, output: 14043, usd: 0.007116 },
+      56: { input: 13660, output: 16059, usd: 0.008101 },
+      60: { input: 14364, output: 17067, usd: 0.008594 },
+    } as const;
+    for (const count of ordinaryCases) {
+      const slice = Array.from({ length: count }, (_, index) =>
+        post({
+          id: `modest-${index}`,
+          kind: "original",
+          text: "Risk assets can still reprice if growth cools from here.",
+        }),
+      );
+      const slicePlan = planAnalysisInput(slice, "analyst");
+      const sliceEstimate = estimateRequestBudget(
+        buildChutesRequestBody(
+          buildChatMessages(question.text, slicePlan.sent, "2026-10-10", "desearch"),
+          PRICED_LLM_MODEL,
+          classificationOutputTokenCeiling(slicePlan.sent.length),
+        ),
+      );
+      const want = expected[count];
+      assert.equal(slicePlan.sent.length, count);
+      assert.equal(sliceEstimate.inputTokensUpper, want.input);
+      assert.equal(sliceEstimate.outputTokensUpper, want.output);
+      assert.equal(Number(sliceEstimate.estimatedUsd.toFixed(6)), want.usd);
+      assert.equal(
+        fitsModelContextWindow(sliceEstimate.inputTokensUpper, sliceEstimate.outputTokensUpper),
+        true,
+      );
+      assert.ok(sliceEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
+    }
 
     const tiny = Array.from({ length: LLM_INPUT_MAX_CHARS }, (_, index) =>
       post({ id: `tiny-${index}`, kind: "original", text: "y" }),

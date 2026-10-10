@@ -1,6 +1,10 @@
 import { STALE_RELEVANT_POST_DAYS, isOlderThanDays } from "../config/timeWindow.js";
 import type { AnalysisInputRecord, EvidenceRef } from "../types.js";
-import { BEYOND_INPUT_BUDGET_REASON, compareTimestamp } from "./analysisInput.js";
+import {
+  BEYOND_CONTEXT_WINDOW_REASON,
+  BEYOND_INPUT_BUDGET_REASON,
+  compareTimestamp,
+} from "./analysisInput.js";
 
 export interface RelevanceSummary {
   eligiblePostCount: number;
@@ -9,13 +13,17 @@ export interface RelevanceSummary {
   viewMayBeStale: boolean;
 }
 
-/** Eligible posts are those sent, truncated, or left out only because the character budget filled. */
+/**
+ * Eligible posts are those sent, truncated, or left out because the character
+ * budget or the context window filled.
+ */
 export function eligiblePostCount(records: readonly AnalysisInputRecord[]): number {
   return records.filter(
     (record) =>
       record.disposition === "sent" ||
       record.disposition === "truncated" ||
-      record.reason === BEYOND_INPUT_BUDGET_REASON,
+      record.reason === BEYOND_INPUT_BUDGET_REASON ||
+      record.reason === BEYOND_CONTEXT_WINDOW_REASON,
   ).length;
 }
 

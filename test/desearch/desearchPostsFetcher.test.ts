@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { formatFetchIssue } from "../../src/format/report.js";
 import { DesearchPaginationError } from "../../src/fetch/desearch/fetchHandlePages.js";
 import {
   DesearchNotConfiguredError,
@@ -462,5 +463,55 @@ describe("DesearchPostsFetcher", () => {
       maxPostsTotal: 10,
     });
     assert.equal(outcomes[0]?.status, "empty");
+  });
+
+  it("stops each of three handles at the lower of the per-handle cap and the remaining run budget", async () => {
+    const calls: string[] = [];
+    const transport: DesearchTransport = {
+      async execute(request) {
+        const username = new URL(request.url).searchParams.get("username");
+        assert.equal(typeof username, "string");
+        const handle = username as string;
+        calls.push(handle);
+        const n = calls.filter((item) => item === handle).length;
+        return {
+          status: 200,
+          body: tweetsBody(
+            [validApiTweet(`${handle}-${n}`, handle, "2026-10-09T00:00:00.000Z")],
+            `more-${handle}-${n}`,
+          ),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 5,
+      maxRequestsPerHandle: 2,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["alpha", "beta", "gamma"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 50 },
+    );
+    assert.deepEqual(calls, ["alpha", "alpha", "beta", "beta", "gamma"]);
+    assert.equal(outcomes.length, 3);
+    const expected = [
+      { handle: "alpha", posts: 2, reason: "desearch_handle_request_limit_reached", label: "per-handle request limit reached" },
+      { handle: "beta", posts: 2, reason: "desearch_handle_request_limit_reached", label: "per-handle request limit reached" },
+      { handle: "gamma", posts: 1, reason: "desearch_request_budget_exhausted", label: "run request limit reached" },
+    ] as const;
+    for (const [index, want] of expected.entries()) {
+      const outcome = outcomes[index];
+      assert.equal(outcome?.status, "ok");
+      if (outcome?.status !== "ok") continue;
+      assert.equal(outcome.handle, want.handle);
+      assert.equal(outcome.posts.length, want.posts);
+      assert.equal(outcome.retrievalComplete, false);
+      assert.equal(outcome.fetchStopReason, want.reason);
+      assert.equal(outcome.incompleteReason, want.reason);
+      assert.match(formatFetchIssue(outcome, "desearch"), new RegExp(want.label));
+    }
   });
 });

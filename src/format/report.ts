@@ -16,7 +16,9 @@ const INCOMPLETE_REASON_LABEL: Record<string, string> = {
   total_post_limit_reached: "configured total post limit reached before full retrieval",
   per_person_limit_reached: "configured per-person post limit reached",
   desearch_request_budget_exhausted:
-    "Desearch HTTP request budget exhausted before full pagination (not a dollar cap)",
+    "run Desearch HTTP request limit reached before full pagination (not a dollar cap)",
+  desearch_handle_request_limit_reached:
+    "per-handle Desearch HTTP request limit reached before full pagination (not a dollar cap)",
 };
 
 export function formatFetchIssue(

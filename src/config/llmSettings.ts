@@ -7,6 +7,14 @@ export const CHUTES_CHAT_COMPLETIONS_URL =
 /** The only model whose rates are coded for the local budget check. */
 export const PRICED_LLM_MODEL = "Qwen/Qwen3-32B-TEE";
 
+/** max_model_len for PRICED_LLM_MODEL on Chutes. */
+export const LLM_CONTEXT_WINDOW_TOKENS = 40_960;
+
+/**
+ * Tokens held back so the input ceiling plus max_tokens stays inside the context window.
+ */
+export const LLM_CONTEXT_SAFETY_MARGIN_TOKENS = 1_024;
+
 /** Published Chutes standard input rate for PRICED_LLM_MODEL, USD per 1M tokens. */
 export const LLM_INPUT_USD_PER_MILLION = 0.104;
 
@@ -141,6 +149,14 @@ export function loadLlmRuntimeConfig(
   }
 
   return { ...base, eligible: true };
+}
+
+/** True when the input ceiling plus max_tokens fits in the context window minus the safety margin. */
+export function fitsModelContextWindow(inputTokensUpper: number, maxTokens: number): boolean {
+  return (
+    inputTokensUpper + maxTokens <=
+    LLM_CONTEXT_WINDOW_TOKENS - LLM_CONTEXT_SAFETY_MARGIN_TOKENS
+  );
 }
 
 /** Pessimistic USD ceiling from an input-token upper bound and the coded output cap. */

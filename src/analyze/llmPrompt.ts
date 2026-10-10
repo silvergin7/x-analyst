@@ -43,12 +43,12 @@ export function buildSystemPrompt(
     "Use mixed when relevant posts in different asset classes do not support one stance.",
     "Use unclear when the supplied text cannot support a market stance.",
     "Return one posts entry for every supplied postId, each exactly once.",
-    "Each entry has relevant, asset_class, stance, and a reason of at most 20 words.",
+    "Each entry has relevant, asset_class, stance, and a reason of at most 20 words and 120 characters.",
     "asset_class is equities, rates_bonds, crypto, commodities, fx, macro, or none.",
     "Use none only when relevant is false.",
     "stance is bullish, bearish, neutral, or unclear.",
     "Return an outlook for each asset class that has at least one relevant post.",
-    "Each asset outlook cites only relevant postIds of that asset class.",
+    "Cite each postId in at most one asset outlook, and only in the outlook for that post's asset class.",
     "Return only the JSON object required by the schema.",
   ].join("\n");
 }

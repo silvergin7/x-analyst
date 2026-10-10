@@ -25,6 +25,29 @@ export function loadDesearchRequestBudget(
   );
 }
 
+/**
+ * Optional cap on Desearch HTTP requests for one handle.
+ * Unset, empty, or malformed means no per-handle limit.
+ */
+export function loadDesearchMaxRequestsPerHandle(
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const raw = env.DESEARCH_MAX_REQUESTS_PER_HANDLE;
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === "" || !/^\d+$/.test(trimmed)) return undefined;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(n) || n < 1) return undefined;
+  return n;
+}
+
+/** A positive override is a per-handle cap. Anything else means no per-handle limit. */
+export function resolveMaxRequestsPerHandleOverride(override?: number): number | undefined {
+  if (override === undefined) return undefined;
+  if (!Number.isSafeInteger(override) || override < 1) return undefined;
+  return override;
+}
+
 /** Validate constructor override for max HTTP requests per run. */
 export function resolveMaxRequestsPerRunOverride(override?: number): number {
   if (override === undefined) {

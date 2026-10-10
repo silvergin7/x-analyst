@@ -8,7 +8,8 @@ export const STALE_RELEVANT_POST_DAYS = 14;
 export const FETCH_STOP_LABEL: Record<FetchStopReason, string> = {
   lookback_window_reached: "oldest post is past the lookback window",
   no_more_pages: "no more pages",
-  desearch_request_budget_exhausted: "Desearch request limit reached",
+  desearch_request_budget_exhausted: "run request limit reached",
+  desearch_handle_request_limit_reached: "per-handle request limit reached",
 };
 
 /** UTC midnight of a YYYY-MM-DD reference date, or null when the date is not that shape. */

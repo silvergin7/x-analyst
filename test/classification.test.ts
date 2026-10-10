@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { planAnalysisInput } from "../src/analyze/analysisInput.js";
 import { checkClassifications, parseModelOutlook } from "../src/analyze/classification.js";
-import { LlmCitationError } from "../src/analyze/llmErrors.js";
+import { LlmCitationError, LlmOutputError } from "../src/analyze/llmErrors.js";
+import { CLASSIFICATION_REASON_MAX_CHARS } from "../src/analyze/outputBudget.js";
 import { buildSystemPrompt, buildUserPrompt } from "../src/analyze/llmPrompt.js";
 import { BEYOND_INPUT_BUDGET_REASON } from "../src/analyze/analysisInput.js";
 import { LLM_MAX_QUOTE_CONTEXT_CHARS } from "../src/config/llmSettings.js";
@@ -101,6 +102,102 @@ describe("post classification", () => {
       (err: unknown) =>
         err instanceof LlmCitationError &&
         /Classification missing sent id rates-old/.test(err.message),
+    );
+  });
+
+  it("rejects a reason longer than 120 characters and still accepts 120", () => {
+    const reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS);
+    const accepted = classifiedOutlook({
+      outlook: "unclear",
+      explanation: "No market stance in these posts.",
+      posts: [
+        { postId: "noise", relevant: false, reason },
+        { postId: "crypto-a", relevant: false, reason },
+        { postId: "crypto-b", relevant: false, reason },
+        { postId: "rates-old", relevant: false, reason },
+      ],
+    });
+    const plan = planAnalysisInput(marketPosts, "analyst");
+    assert.equal(reason.length, 120);
+    assert.doesNotThrow(() =>
+      checkClassifications(plan.sent, parseModelOutlook(JSON.stringify(accepted)), "2026-10-10"),
+    );
+    accepted.posts[0]!.reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 1);
+    assert.throws(
+      () => parseModelOutlook(JSON.stringify(accepted)),
+      (err: unknown) =>
+        err instanceof LlmOutputError && /reason exceeded the character bound/.test(err.message),
+    );
+    const tooManyWords = classifiedOutlook({
+      outlook: "unclear",
+      explanation: "Too many words in one reason.",
+      posts: [
+        { postId: "noise", relevant: false, reason: "word ".repeat(21).trim() },
+        { postId: "crypto-a", relevant: false },
+        { postId: "crypto-b", relevant: false },
+        { postId: "rates-old", relevant: false },
+      ],
+    });
+    assert.ok(tooManyWords.posts[0]!.reason.length <= CLASSIFICATION_REASON_MAX_CHARS);
+    assert.throws(
+      () => parseModelOutlook(JSON.stringify(tooManyWords)),
+      (err: unknown) => err instanceof LlmOutputError && /exceeded 20 words/.test(err.message),
+    );
+  });
+
+  it("fails when a post id is cited in two asset outlooks", () => {
+    assert.throws(
+      () =>
+        checked(classifiedOutlook({
+          outlook: "mixed",
+          explanation: "The same post was cited twice.",
+          posts: [
+            { postId: "noise", relevant: false },
+            { postId: "crypto-a", relevant: true, asset_class: "crypto", stance: "bullish" },
+            { postId: "crypto-b", relevant: true, asset_class: "crypto", stance: "bearish" },
+            { postId: "rates-old", relevant: true, asset_class: "rates_bonds", stance: "bullish" },
+          ],
+          assetOutlooks: [
+            { asset_class: "crypto", outlook: "mixed", evidencePostIds: ["crypto-a"] },
+            {
+              asset_class: "rates_bonds",
+              outlook: "cautious",
+              evidencePostIds: ["crypto-a", "rates-old"],
+            },
+          ],
+        })),
+      (err: unknown) =>
+        err instanceof LlmCitationError &&
+        /Post id crypto-a was cited in more than one asset outlook/.test(err.message),
+    );
+  });
+
+  it("fails when a post id is cited in the wrong asset class", () => {
+    assert.throws(
+      () =>
+        checked(classifiedOutlook({
+          outlook: "mixed",
+          explanation: "A crypto post was cited as rates.",
+          posts: [
+            { postId: "noise", relevant: false },
+            { postId: "crypto-a", relevant: true, asset_class: "crypto", stance: "bullish" },
+            { postId: "crypto-b", relevant: true, asset_class: "crypto", stance: "bearish" },
+            { postId: "rates-old", relevant: true, asset_class: "rates_bonds", stance: "bullish" },
+          ],
+          assetOutlooks: [
+            { asset_class: "crypto", outlook: "mixed", evidencePostIds: ["crypto-b"] },
+            {
+              asset_class: "rates_bonds",
+              outlook: "cautious",
+              evidencePostIds: ["crypto-a", "rates-old"],
+            },
+          ],
+        })),
+      (err: unknown) =>
+        err instanceof LlmCitationError &&
+        /Asset class rates_bonds cited crypto-a, which is not a relevant post of that class/.test(
+          err.message,
+        ),
     );
   });
 

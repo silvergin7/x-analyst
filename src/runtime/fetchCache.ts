@@ -21,6 +21,8 @@ export function fetchCacheKey(input: {
   maxPostsPerPerson: number;
   maxPostsTotal: number;
   maxRequestsPerRun: number;
+  /** Null when DESEARCH_MAX_REQUESTS_PER_HANDLE is unset. */
+  maxRequestsPerHandle: number | null;
   lookbackDays: number;
   referenceDate: string;
 }): string {
@@ -30,6 +32,7 @@ export function fetchCacheKey(input: {
     maxPostsPerPerson: input.maxPostsPerPerson,
     maxPostsTotal: input.maxPostsTotal,
     maxRequestsPerRun: input.maxRequestsPerRun,
+    maxRequestsPerHandle: input.maxRequestsPerHandle,
     lookbackDays: input.lookbackDays,
     referenceDate: input.referenceDate,
   });

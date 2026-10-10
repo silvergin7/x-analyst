@@ -7,6 +7,7 @@ import type { AnalysisInputRecord, Post } from "../types.js";
 
 export const SENT_TEXT_EXCERPT_CHARS = 100;
 export const BEYOND_INPUT_BUDGET_REASON = "beyond_input_character_budget";
+export const BEYOND_CONTEXT_WINDOW_REASON = "beyond_context_window";
 export const OUTSIDE_LOOKBACK_REASON = "outside_lookback_window";
 
 export interface SentPost {

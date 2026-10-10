@@ -1,17 +1,49 @@
 import {
+  resolveMaxRequestsPerHandleOverride,
   resolveMaxRequestsPerRunOverride,
   loadDesearchSettings,
   resolveDesearchApiKey,
   type DesearchSettings,
 } from "../../config/desearchSettings.js";
 import { validateHandle } from "../../validation/handles.js";
-import type { DesearchBilling, FetchLimits, FetchOutcome } from "../../types.js";
+import type {
+  DesearchBilling,
+  FetchLimits,
+  FetchOutcome,
+  FetchStopReason,
+} from "../../types.js";
 import type { FetchWindow, PostsFetcher } from "../postsFetcher.js";
 import { DesearchPaginationError, fetchHandlePages } from "./fetchHandlePages.js";
 import {
   DesearchRetrievalError,
   type DesearchTransport,
 } from "./desearchTransport.js";
+
+function requestAllowance(
+  runRemaining: number,
+  perHandle: number | undefined,
+): { allowed: number; binding: "per_handle" | "per_run" } {
+  if (perHandle !== undefined && perHandle <= runRemaining) {
+    return { allowed: perHandle, binding: "per_handle" };
+  }
+  return { allowed: runRemaining, binding: "per_run" };
+}
+
+function requestLimitReason(
+  binding: "per_handle" | "per_run",
+): "desearch_handle_request_limit_reached" | "desearch_request_budget_exhausted" {
+  return binding === "per_handle"
+    ? "desearch_handle_request_limit_reached"
+    : "desearch_request_budget_exhausted";
+}
+
+function limitStopReason(
+  stopReason: FetchStopReason,
+  binding: "per_handle" | "per_run",
+): FetchStopReason {
+  if (stopReason !== "desearch_request_budget_exhausted") return stopReason;
+  return requestLimitReason(binding);
+}
 
 function withBilling(
   outcome: FetchOutcome,
@@ -36,6 +68,11 @@ export interface DesearchPostsFetcherOptions {
   credential?: string;
   /** Override request budget (HTTP calls per run). */
   maxRequestsPerRun?: number;
+  /**
+   * Cap on HTTP calls for one handle.
+   * Omit it, or pass a non-positive value, for no per-handle limit.
+   */
+  maxRequestsPerHandle?: number;
 }
 
 /**
@@ -45,6 +82,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
   private readonly transport: DesearchTransport;
   private readonly credential: string;
   private readonly maxRequestsPerRun: number;
+  private readonly maxRequestsPerHandle: number | undefined;
 
   constructor(options: DesearchPostsFetcherOptions) {
     const settings = options.settings ?? loadDesearchSettings();
@@ -63,6 +101,9 @@ export class DesearchPostsFetcher implements PostsFetcher {
     this.credential = credential;
     this.maxRequestsPerRun = resolveMaxRequestsPerRunOverride(
       options.maxRequestsPerRun,
+    );
+    this.maxRequestsPerHandle = resolveMaxRequestsPerHandleOverride(
+      options.maxRequestsPerHandle,
     );
   }
 
@@ -97,6 +138,8 @@ export class DesearchPostsFetcher implements PostsFetcher {
         continue;
       }
 
+      const allowance = requestAllowance(requestBudgetRemaining, this.maxRequestsPerHandle);
+
       let pageResult: Awaited<ReturnType<typeof fetchHandlePages>>;
       try {
         pageResult = await fetchHandlePages(
@@ -104,7 +147,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
           this.credential,
           this.transport,
           {
-            requestBudgetRemaining,
+            requestBudgetRemaining: allowance.allowed,
             lookbackCutoffMs,
           },
         );
@@ -127,15 +170,18 @@ export class DesearchPostsFetcher implements PostsFetcher {
       }
 
       requestBudgetRemaining -= pageResult.requestsUsed;
+      const stoppedForRequests = pageResult.stopReason === "desearch_request_budget_exhausted";
+      const requestLimit = requestLimitReason(allowance.binding);
+      const fetchStopReason = limitStopReason(pageResult.stopReason, allowance.binding);
 
       if (pageResult.posts.length === 0) {
-        if (pageResult.stopReason === "desearch_request_budget_exhausted") {
+        if (stoppedForRequests) {
           outcomes.push(
             withBilling(
               {
                 status: "incomplete",
                 handle,
-                reason: "desearch_request_budget_exhausted",
+                reason: requestLimit,
               },
               pageResult.billing,
             ),
@@ -146,19 +192,15 @@ export class DesearchPostsFetcher implements PostsFetcher {
         continue;
       }
 
-      const retrievalComplete =
-        pageResult.stopReason !== "desearch_request_budget_exhausted";
       outcomes.push(
         withBilling(
           {
             status: "ok",
             handle,
             posts: pageResult.posts,
-            retrievalComplete,
-            incompleteReason: retrievalComplete
-              ? undefined
-              : "desearch_request_budget_exhausted",
-            fetchStopReason: pageResult.stopReason,
+            retrievalComplete: !stoppedForRequests,
+            incompleteReason: stoppedForRequests ? requestLimit : undefined,
+            fetchStopReason,
             duplicatePostsRemoved: pageResult.duplicatesRemoved,
           },
           pageResult.billing,

@@ -8,6 +8,7 @@ import {
 import { MockOutlookAnalyzer } from "./analyze/outlookAnalyzer.js";
 import { loadFetchLimits, loadLookbackDays } from "./config.js";
 import {
+  loadDesearchMaxRequestsPerHandle,
   loadDesearchRequestBudget,
   loadDesearchSettings,
 } from "./config/desearchSettings.js";
@@ -166,6 +167,7 @@ export async function runReport(
   const cutoffMs = lookbackCutoffMs(referenceDate, lookbackDays);
   const inputMaxChars = loadInputMaxChars(env);
   const maxRequestsPerRun = loadDesearchRequestBudget(env);
+  const maxRequestsPerHandle = loadDesearchMaxRequestsPerHandle(env);
   const cache = options.cache ?? sharedFetchSliceCache;
   const key = fetchCacheKey({
     postsSource,
@@ -173,6 +175,7 @@ export async function runReport(
     maxPostsPerPerson: limits.maxPostsPerPerson,
     maxPostsTotal: limits.maxPostsTotal,
     maxRequestsPerRun,
+    maxRequestsPerHandle: maxRequestsPerHandle ?? null,
     lookbackDays,
     referenceDate,
   });

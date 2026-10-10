@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   DESEARCH_PLACEHOLDER_KEY,
+  loadDesearchMaxRequestsPerHandle,
   loadDesearchRequestBudget,
   loadDesearchSettings,
   resolveDesearchApiKey,
@@ -81,6 +82,35 @@ describe("loadDesearchRequestBudget", () => {
   it("accepts positive whole integers", () => {
     process.env.DESEARCH_MAX_REQUESTS_PER_RUN = "3";
     assert.equal(loadDesearchRequestBudget(), 3);
+  });
+});
+
+describe("loadDesearchMaxRequestsPerHandle", () => {
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE;
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE;
+    else process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE = saved;
+  });
+
+  it("applies no per-handle limit when the variable is unset or malformed", () => {
+    delete process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE;
+    assert.equal(loadDesearchMaxRequestsPerHandle(), undefined);
+    process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE = "";
+    assert.equal(loadDesearchMaxRequestsPerHandle(), undefined);
+    process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE = "0";
+    assert.equal(loadDesearchMaxRequestsPerHandle(), undefined);
+    process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE = "nope";
+    assert.equal(loadDesearchMaxRequestsPerHandle(), undefined);
+  });
+
+  it("accepts a positive whole integer", () => {
+    process.env.DESEARCH_MAX_REQUESTS_PER_HANDLE = "2";
+    assert.equal(loadDesearchMaxRequestsPerHandle(), 2);
   });
 });
 

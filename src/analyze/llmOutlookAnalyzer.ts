@@ -10,7 +10,12 @@ import type {
   PostSource,
   RetrievalContext,
 } from "../types.js";
-import { comparePostTime, planAnalysisInput } from "./analysisInput.js";
+import {
+  BEYOND_CONTEXT_WINDOW_REASON,
+  comparePostTime,
+  planAnalysisInput,
+} from "./analysisInput.js";
+import { fitAnalysisInputToContextWindow } from "./fitContextWindow.js";
 import { summarizeRelevance } from "./relevance.js";
 import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import {
@@ -83,10 +88,17 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     retrieval: RetrievalContext,
   ): Promise<PersonOutlookReport> {
     assertQuestionBound(question.text);
-    const plan = planAnalysisInput(posts, handle, {
-      inputMaxChars: retrieval.inputMaxChars,
-      lookbackCutoffMs: retrieval.lookbackCutoffMs,
-    });
+    const plan = fitAnalysisInputToContextWindow(
+      planAnalysisInput(posts, handle, {
+        inputMaxChars: retrieval.inputMaxChars,
+        lookbackCutoffMs: retrieval.lookbackCutoffMs,
+      }),
+      {
+        question: question.text,
+        referenceDate: this.referenceDate,
+        postSource: this.postSource,
+      },
+    );
     const base = {
       handle,
       dateRangeExamined: dateRange(posts),
@@ -106,8 +118,11 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
         ...base,
         ...summarizeRelevance(plan.records, [], this.referenceDate),
         outlook: "unclear",
-        explanation:
-          "No original post and no quote with analyst commentary was available. The model was not called. Excluded posts were not model-examined.",
+        explanation: plan.records.some(
+          (record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON,
+        )
+          ? "Every eligible post was left out because the request did not fit the model context window. The model was not called."
+          : "No original post and no quote with analyst commentary was available. The model was not called. Excluded posts were not model-examined.",
         evidence: [],
         modelInvoked: false,
       };

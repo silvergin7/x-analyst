@@ -39,7 +39,8 @@ export interface FetchLimits {
 export type FetchIncompleteReason =
   | "total_post_limit_reached"
   | "per_person_limit_reached"
-  | "desearch_request_budget_exhausted";
+  | "desearch_request_budget_exhausted"
+  | "desearch_handle_request_limit_reached";
 
 /**
  * Why Desearch stopped requesting another page for one handle.
@@ -48,7 +49,8 @@ export type FetchIncompleteReason =
 export type FetchStopReason =
   | "lookback_window_reached"
   | "no_more_pages"
-  | "desearch_request_budget_exhausted";
+  | "desearch_request_budget_exhausted"
+  | "desearch_handle_request_limit_reached";
 
 export type PostSource = "fixtures" | "desearch";
 
@@ -77,7 +79,10 @@ type FetchOutcomeShape =
   | {
       status: "incomplete";
       handle: string;
-      reason: "total_post_limit_reached" | "desearch_request_budget_exhausted";
+      reason:
+        | "total_post_limit_reached"
+        | "desearch_request_budget_exhausted"
+        | "desearch_handle_request_limit_reached";
     }
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }
@@ -168,7 +173,7 @@ export interface PersonOutlookReport {
   budgetEstimate?: BudgetEstimate;
   /** UTC date the opt-in analyzer used for the word "current". */
   analysisReferenceDate?: string;
-  /** Eligible posts in the window, including those that did not fit the character budget. */
+  /** Eligible posts in the window, including those left out by the character budget or context window. */
   eligiblePostCount?: number;
   /** Posts the model classified as relevant. */
   relevantPostCount?: number;

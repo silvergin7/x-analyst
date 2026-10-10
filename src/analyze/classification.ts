@@ -203,6 +203,7 @@ function evidenceFor(post: SentPost): EvidenceRef {
 /**
  * Every sent id is classified once. Unknown and missing ids fail the run.
  * Relevant posts are those classified relevant. Each such asset class has one outlook.
+ * A post id is cited in at most one outlook, and only for its classified asset class.
  */
 export function checkClassifications(
   sent: readonly SentPost[],
@@ -258,6 +259,7 @@ export function checkClassifications(
     }
   }
 
+  const citedByOutlook = new Map<string, Exclude<AssetClass, "none">>();
   const assetOutlooks: AssetClassOutlook[] = parsed.assetOutlooks.map((item) => {
     const classPosts = relevantByClass.get(item.assetClass) ?? [];
     const classIds = new Set(classPosts.map((post) => post.postId));
@@ -273,6 +275,11 @@ export function checkClassifications(
         throw new LlmCitationError(`Asset class ${item.assetClass} cited ${id} more than once`);
       }
       cited.add(id);
+      const priorOutlook = citedByOutlook.get(id);
+      if (priorOutlook !== undefined) {
+        throw new LlmCitationError(`Post id ${id} was cited in more than one asset outlook`);
+      }
+      citedByOutlook.set(id, item.assetClass);
       if (!classIds.has(id)) {
         throw new LlmCitationError(
           `Asset class ${item.assetClass} cited ${id}, which is not a relevant post of that class`,

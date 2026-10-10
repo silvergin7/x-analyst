@@ -1,7 +1,10 @@
 import {
   CHUTES_CHAT_COMPLETIONS_URL,
   LLM_CALL_BUDGET_USD,
+  LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
+  LLM_CONTEXT_WINDOW_TOKENS,
   LLM_REQUEST_TIMEOUT_MS,
+  fitsModelContextWindow,
   type LlmRuntimeConfig,
 } from "../config/llmSettings.js";
 import type { BudgetEstimate, ProviderTokenUsage } from "../types.js";
@@ -15,6 +18,7 @@ import {
 export type LlmFailureCode =
   | "gate"
   | "budget"
+  | "context_window"
   | "http"
   | "timeout"
   | "refusal"
@@ -175,6 +179,14 @@ export async function requestChutesCompletion(
     throw new LlmCallError(
       "budget",
       `Pessimistic estimate $${estimate.estimatedUsd.toFixed(6)} exceeds the $${LLM_CALL_BUDGET_USD.toFixed(2)} local budget`,
+      estimate,
+    );
+  }
+  if (!fitsModelContextWindow(estimate.inputTokensUpper, requestBody.max_tokens)) {
+    const budget = LLM_CONTEXT_WINDOW_TOKENS - LLM_CONTEXT_SAFETY_MARGIN_TOKENS;
+    throw new LlmCallError(
+      "context_window",
+      `Input ceiling ${estimate.inputTokensUpper} plus max_tokens ${requestBody.max_tokens} exceeds the context window budget of ${budget}`,
       estimate,
     );
   }
