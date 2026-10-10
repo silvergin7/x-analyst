@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import { DEFAULT_HANDLES, DEFAULT_QUESTION } from "../src/config.js";
 import { parseCliArgs } from "../src/cliArgs.js";
@@ -74,6 +75,73 @@ describe("parseCliArgs", () => {
     assert.equal(opts.fresh, true);
     assert.equal(opts.asOf, "2026-10-09");
     assert.equal(opts.flagErrors.length, 0);
+  });
+
+  it("keeps one quoted question string intact", () => {
+    const opts = parseCliArgs([
+      "--handles",
+      "bullmacro",
+      "--question",
+      "What is each analyst's current market outlook?",
+      "--as-of",
+      "2026-10-10",
+    ]);
+    assert.equal(opts.question, "What is each analyst's current market outlook?");
+    assert.equal(opts.asOf, "2026-10-10");
+    assert.deepEqual(opts.handles, ["bullmacro"]);
+    assert.equal(opts.flagErrors.length, 0);
+  });
+
+  it("joins question words that arrive as separate arguments", () => {
+    const opts = parseCliArgs([
+      "--handles",
+      "LynAldenContact",
+      "--question",
+      "What",
+      "is",
+      "each",
+      "analyst's",
+      "current",
+      "market",
+      "outlook?",
+      "--as-of",
+      "2026-10-10",
+    ]);
+    assert.equal(opts.question, "What is each analyst's current market outlook?");
+    assert.equal(opts.asOf, "2026-10-10");
+    assert.deepEqual(opts.handles, ["lynaldencontact"]);
+    assert.equal(opts.flagErrors.length, 0);
+  });
+
+  it("npm start keeps the quoted question after the script shell splits it", () => {
+    const result = spawnSync(
+      "npm",
+      [
+        "start",
+        "--",
+        "--handles",
+        "bullmacro",
+        "--question",
+        "What is each analyst's current market outlook?",
+        "--as-of",
+        "2026-10-10",
+      ],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          POSTS_PROVIDER: "mock",
+          DESEARCH_LIVE_ENABLED: "false",
+          ANALYSIS_PROVIDER: "mock",
+          LLM_LIVE_ENABLED: "false",
+          CHUTES_API_KEY: "",
+          DESEARCH_API_KEY: "",
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout ?? "", /Question: What is each analyst's current market outlook\?/);
   });
 
   it("rejects an impossible --as-of date", () => {

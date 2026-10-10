@@ -82,6 +82,88 @@ describe("parseTwitterUserPostsResponse", () => {
     }
   });
 
+  it("keeps surrounding posts when one item is both a retweet and a quote", () => {
+    const result = parseTwitterUserPostsResponse("sampleanalyst", {
+      user: {
+        id: "1001",
+        url: "https://fixture.x-analyst.local/sampleanalyst",
+        name: "Sample Analyst",
+        username: "sampleanalyst",
+      },
+      tweets: [
+        validTweet({ id: "status-1", user: { username: "sampleanalyst" } }),
+        validTweet({
+          id: "status-2",
+          text: "Rates can stay restrictive.",
+          created_at: "2026-10-02T12:00:00.000Z",
+          url: "https://fixture.x-analyst.local/status/2",
+          user: { username: "sampleanalyst" },
+        }),
+        validTweet({
+          id: "status-3",
+          text: "Credit spreads look calm.",
+          created_at: "2026-10-04T12:00:00.000Z",
+          url: "https://fixture.x-analyst.local/status/3",
+          user: { username: "sampleanalyst" },
+        }),
+        validTweet({
+          id: "status-4",
+          text: "Inventories are still tight.",
+          created_at: "2026-10-06T12:00:00.000Z",
+          url: "https://fixture.x-analyst.local/status/4",
+          user: { username: "sampleanalyst" },
+        }),
+        {
+          id: "status-5",
+          text: "Sharing another account's market note.",
+          created_at: "2026-10-08T15:00:00.000Z",
+          url: "https://fixture.x-analyst.local/status/5",
+          reply_count: 1,
+          retweet_count: 2,
+          like_count: 3,
+          is_quote_tweet: true,
+          is_retweet: true,
+          user: {
+            id: "1001",
+            username: "sampleanalyst",
+            name: "Sample Analyst",
+          },
+          quote: {
+            id: "quoted-note",
+            text: "Quoted text that must not become analyst commentary.",
+            is_quote_tweet: false,
+            is_retweet: false,
+          },
+          retweet: {
+            id: "reposted-note",
+            text: "Reposted text that must not become analyst commentary.",
+          },
+        },
+        validTweet({
+          id: "status-6",
+          text: "The later original post is still constructive.",
+          created_at: "2026-10-09T12:00:00.000Z",
+          url: "https://fixture.x-analyst.local/status/6",
+          user: { username: "sampleanalyst" },
+        }),
+      ],
+      next_cursor: "",
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.deepEqual(
+      result.posts.map((post) => post.id),
+      ["status-1", "status-2", "status-3", "status-4", "status-5", "status-6"],
+    );
+    const mixed = result.posts[4];
+    assert.equal(mixed?.kind, "repost");
+    assert.equal(mixed?.typeConflict, "retweet_and_quote");
+    assert.equal(mixed?.analystComment, undefined);
+    assert.equal(mixed?.text, "Sharing another account's market note.");
+    assert.equal(result.posts[5]?.kind, "original");
+    assert.equal(result.hasMorePages, false);
+  });
+
   it("rejects non-string next_cursor", () => {
     const result = parseTwitterUserPostsResponse("bullmacro", {
       tweets: [],

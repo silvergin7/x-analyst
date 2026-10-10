@@ -1,4 +1,6 @@
+import { planAnalysisInput } from "./analysisInput.js";
 import type {
+  AnalysisInputRecord,
   AnalysisQuestion,
   EvidenceRef,
   MarketOutlook,
@@ -101,10 +103,17 @@ export class MockOutlookAnalyzer implements OutlookAnalyzer {
       (a, b) => b.timestamp.localeCompare(a.timestamp),
     );
     const range = dateRange(examined);
+    const inputPlan = planAnalysisInput(posts, handle);
+    const analysisInput: AnalysisInputRecord[] | undefined = inputPlan.records.some(
+      (record) => record.reason === "retweet_and_quote",
+    )
+      ? inputPlan.records
+      : undefined;
     const baseMeta = {
       postsExamined: examined.length,
       retrievalComplete: retrieval.retrievalComplete,
       retrievalIncompleteReason: retrieval.incompleteReason,
+      ...(analysisInput ? { analysisInput } : {}),
     };
 
     const signals = examined

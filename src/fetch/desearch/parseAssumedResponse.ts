@@ -31,12 +31,16 @@ function validatePostUrl(value: string): boolean {
 
 /**
  * Classify post kind from documented booleans only.
- * Missing or conflicting flags are rejected — never default to original.
+ * Missing flags are rejected and never default to original.
+ * Both flags true keeps the post as a repost with typeConflict set, so one
+ * mixed item does not discard the rest of the response.
  */
 function resolvePostKind(
   item: DesearchTwitterPostItem,
   index: number,
-): { ok: true; kind: PostKind } | { ok: false; reason: string } {
+):
+  | { ok: true; kind: PostKind; typeConflict?: "retweet_and_quote" }
+  | { ok: false; reason: string } {
   if (typeof item.is_retweet !== "boolean" || typeof item.is_quote_tweet !== "boolean") {
     return {
       ok: false,
@@ -44,10 +48,7 @@ function resolvePostKind(
     };
   }
   if (item.is_retweet === true && item.is_quote_tweet === true) {
-    return {
-      ok: false,
-      reason: `item ${index}: conflicting is_retweet and is_quote_tweet`,
-    };
+    return { ok: true, kind: "repost", typeConflict: "retweet_and_quote" };
   }
   if (item.is_retweet === true) return { ok: true, kind: "repost" };
   if (item.is_quote_tweet === true) return { ok: true, kind: "quote" };
@@ -94,6 +95,7 @@ function mapTweet(
     url: raw.url.trim(),
     kind: kindResult.kind,
   };
+  if (kindResult.typeConflict) post.typeConflict = kindResult.typeConflict;
   return { ok: true, post };
 }
 

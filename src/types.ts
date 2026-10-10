@@ -11,6 +11,11 @@ export interface Post {
   kind: PostKind;
   /** For quotes: the analyst's own commentary, if any. */
   analystComment?: string;
+  /**
+   * Both Desearch kind flags were true. The post is kept as a repost and
+   * withheld from outlook text.
+   */
+  typeConflict?: "retweet_and_quote";
 }
 
 /** Configurable caps for retrieval (mock and future live fetch). */

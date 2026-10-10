@@ -40,6 +40,8 @@ Custom handles and question:
 npm run start -- --handles bullmacro,bearmacro,unclearmacro --question "What is each analyst's current market outlook?"
 ```
 
+`npm start` runs the script through a shell, which splits a quoted question into separate words. The CLI joins those words back together until the next `--` flag, so the question above arrives intact. A single already-joined argument is unchanged.
+
 Optional retention caps (also apply to the mock web API, which calls the same report runner):
 
 ```bash
@@ -115,7 +117,7 @@ A successful slice is kept in memory for the life of the process. The cache hold
 
 The analysis reference date is the CLI `--as-of` value, or the UTC date of that CLI invocation when the flag is omitted. The API and web form use the UTC date of the submission. Fixture-only prompts say the posts are a synthetic fixture test. A Desearch run does not use that wording or a fixed test date. Fixture evidence keeps the fictional-link label. Retrieved evidence does not.
 
-The Desearch parser marks a quote from `is_quote_tweet` and does not set analyst commentary. This path does not guess commentary from the tweet text or a quote object. A quote without commentary is excluded from model input. If nothing eligible remains, the outlook is local `unclear` and Chutes is not called.
+The Desearch parser marks a quote from `is_quote_tweet` and does not set analyst commentary. This path does not guess commentary from the tweet text or a quote object. A quote without commentary is excluded from model input. When `is_retweet` and `is_quote_tweet` are both true, that post is kept as a repost and listed as excluded with reason `retweet_and_quote`. The other valid posts in the response are kept. If nothing eligible remains, the outlook is local `unclear` and Chutes is not called.
 
 When Desearch returns `X-Desearch-Cost-Usd`, `X-Desearch-Usage-Count`, `X-Desearch-Service`, `X-Desearch-Currency`, or the same values on the JSON body, the report keeps those fields. A missing cost is left missing. A failed run stays failed: it does not retry and it does not present a complete report. Billing already returned, and token usage from model calls already made, are shown with that failure. Desearch failures report an HTTP status or a fixed category. They do not include the response body or the underlying exception text. Confirm the current `GET /twitter/user/posts` price and the account credits in the Desearch console before any live call. A live Desearch-to-Chutes run is a separate approval and has not been made here.
 

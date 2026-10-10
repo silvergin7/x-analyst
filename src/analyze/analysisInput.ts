@@ -17,6 +17,7 @@ export interface AnalysisInputPlan {
 }
 
 function eligibleText(post: Post): string | null {
+  if (post.typeConflict === "retweet_and_quote") return null;
   if (post.kind === "original") return post.text;
   if (post.kind === "quote") {
     const comment = post.analystComment?.trim() ?? "";
@@ -26,6 +27,7 @@ function eligibleText(post: Post): string | null {
 }
 
 function exclusionReason(post: Post): string {
+  if (post.typeConflict === "retweet_and_quote") return "retweet_and_quote";
   if (post.kind === "repost") return "repost";
   if (post.kind === "quote") return "quote_without_analyst_commentary";
   return "ineligible_post";
@@ -34,7 +36,8 @@ function exclusionReason(post: Post): string {
 /**
  * Choose model input from a retrieved slice.
  * Original posts send their own text. Quotes send only non-empty analyst commentary.
- * Reposts and quotes without commentary are excluded. At most 10 eligible posts,
+ * Reposts, quotes without commentary, and posts with both retweet and quote
+ * flags are excluded. At most 10 eligible posts,
  * most recent first, are sent.
  */
 export function planAnalysisInput(

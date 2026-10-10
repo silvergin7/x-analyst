@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ChutesTransport } from "../src/analyze/chutesClient.js";
 import type { DesearchTransport } from "../src/fetch/desearch/desearchTransport.js";
+import { formatFullReport } from "../src/format/report.js";
 import { createFetchSliceCache } from "../src/runtime/fetchCache.js";
 import { ReportConfigError, ReportRunError, runReport } from "../src/runReport.js";
 
@@ -201,6 +202,66 @@ describe("runReport live gates", () => {
           record.postId === "quote-1" && record.reason === "quote_without_analyst_commentary",
       ),
     );
+  });
+
+  it("keeps valid posts when one retrieved item is both a retweet and a quote", async () => {
+    const posts = desearchTransport([
+      tweet("live-1", false),
+      {
+        id: "mixed-5",
+        text: "Sharing another account's market note.",
+        created_at: "2026-10-08T15:00:00.000Z",
+        url: "https://fixture.x-analyst.local/status/mixed-5",
+        reply_count: 1,
+        is_quote_tweet: true,
+        is_retweet: true,
+        user: { id: "1001", username: "bullmacro", name: "Sample Analyst" },
+        quote: {
+          id: "quoted-note",
+          text: "Quoted text that must not become analyst commentary.",
+        },
+        retweet: {
+          id: "reposted-note",
+          text: "Reposted text that must not become analyst commentary.",
+        },
+      },
+      tweet("live-2", false),
+    ]);
+    const model = chutesTransport({
+      outlook: "bullish",
+      explanation: "The supplied originals say growth remains constructive.",
+      evidencePostIds: ["live-1", "live-2"],
+    });
+    const result = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: desearchEnv(),
+      cache: createFetchSliceCache(),
+      desearchTransport: posts.transport,
+      chutesTransport: model.transport,
+    });
+    assert.equal(posts.calls.length, 1);
+    assert.equal(model.calls.length, 1);
+    const prompt = promptText(model.calls[0]!.body);
+    assert.match(prompt, /Growth remains constructive/);
+    assert.doesNotMatch(prompt, /Sharing another account/);
+    assert.doesNotMatch(prompt, /Quoted text that must not/);
+    assert.doesNotMatch(prompt, /Reposted text that must not/);
+    const excluded = result.reports[0]?.analysisInput?.find(
+      (record) => record.postId === "mixed-5",
+    );
+    assert.equal(excluded?.disposition, "excluded");
+    assert.equal(excluded?.reason, "retweet_and_quote");
+    const text = formatFullReport(question.text, [], result.reports, {
+      postsSource: result.postsSource,
+      analysisSource: result.analysisSource,
+      referenceDate: result.referenceDate,
+      fetchedAt: result.fetchedAt,
+      reused: result.reused,
+      billing: result.billing,
+    });
+    assert.match(text, /mixed-5 excluded \(retweet_and_quote,/);
+    assert.match(text, /live-1 sent/);
+    assert.match(text, /live-2 sent/);
   });
 
   it("returns local unclear and skips Chutes when only an uncommented quote was retrieved", async () => {
