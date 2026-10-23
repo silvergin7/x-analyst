@@ -7,6 +7,8 @@ import {
   type ChutesTransport,
 } from "./analyze/chutesClient.js";
 import { buildChatMessages, buildChutesRequestBody, estimateRequestBudget } from "./analyze/llmPrompt.js";
+import { postAliases } from "./analyze/postAliases.js";
+import { classificationOutputTokenCeiling } from "./analyze/outputBudget.js";
 import { loadFetchLimits, DEFAULT_QUESTION } from "./config.js";
 import {
   LLM_CALL_BUDGET_USD,
@@ -147,6 +149,8 @@ export async function runLlmFixtureCheck(input: FixtureCheckInput): Promise<numb
       buildChutesRequestBody(
         buildChatMessages(input.question, plan.sent, referenceDate),
         config.model,
+        classificationOutputTokenCeiling(plan.sent.length),
+        postAliases(plan.sent).map((item) => item.alias),
       ),
     );
     input.write(`${formatBudgetEstimate(estimate)}\n`);

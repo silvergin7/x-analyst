@@ -26,7 +26,8 @@ import { buildChatMessages } from "./llmPrompt.js";
 import type { LlmRuntimeConfig } from "../config/llmSettings.js";
 import type { OutlookAnalyzer } from "./outlookAnalyzer.js";
 import { validateEvidenceIntegrity } from "./outlookAnalyzer.js";
-import { checkClassifications, parseModelOutlook } from "./classification.js";
+import { checkClassifications, parseModelOutlook, resolveAliasClassifications } from "./classification.js";
+import { postAliases } from "./postAliases.js";
 import { LlmCitationError, LlmOutputError } from "./llmErrors.js";
 
 export { LlmCitationError, LlmOutputError };
@@ -128,6 +129,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       };
     }
 
+    const aliases = postAliases(plan.sent);
     const messages = buildChatMessages(
       question.text,
       plan.sent,
@@ -139,10 +141,15 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       messages,
       this.transport,
       classificationOutputTokenCeiling(plan.sent.length),
+      aliases.map((item) => item.alias),
     );
     try {
-      const parsed = parseModelOutlook(completion.content);
-      const checked = checkClassifications(plan.sent, parsed, this.referenceDate);
+      const parsed = parseModelOutlook(
+        completion.content,
+        aliases.map((item) => item.alias),
+      );
+      const resolved = resolveAliasClassifications(aliases, parsed);
+      const checked = checkClassifications(plan.sent, resolved, this.referenceDate);
       const integrity = validateEvidenceIntegrity(
         {
           handle,

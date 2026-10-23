@@ -27,6 +27,12 @@ export const LLM_OUTPUT_USD_PER_MILLION = 0.416;
  */
 export const LLM_CALL_BUDGET_USD = 0.05;
 
+/**
+ * A handle fails when unclassified sent posts are a larger share than this.
+ * Exactly this share is allowed.
+ */
+export const UNCLASSIFIED_POST_SHARE_LIMIT = 0.1;
+
 /** Documented Chutes generation cap field value (`max_tokens`, not max_completion_tokens). */
 export const LLM_MAX_OUTPUT_TOKENS = 800;
 

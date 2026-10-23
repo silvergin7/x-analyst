@@ -11,7 +11,8 @@ import {
   estimateRequestBudget,
 } from "../src/analyze/llmPrompt.js";
 import { classificationOutputTokenCeiling } from "../src/analyze/outputBudget.js";
-import { classifiedOutlook } from "./classifiedOutlook.js";
+import { postAliases } from "../src/analyze/postAliases.js";
+import { aliasModel, classifiedOutlook } from "./classifiedOutlook.js";
 import { formatPersonReport } from "../src/format/report.js";
 import {
   LlmCallError,
@@ -28,10 +29,16 @@ import {
 } from "../src/config/llmSettings.js";
 import { runReport } from "../src/runReport.js";
 import { runLlmFixtureCheck } from "../src/llmFixtureCheck.js";
+import { FIXTURE_POSTS_BY_HANDLE } from "../src/fixtures/samplePosts.js";
 import type { LlmRuntimeConfig } from "../src/config/llmSettings.js";
 import type { Post } from "../src/types.js";
 
 const question = { text: "What is each analyst's current market outlook?" };
+
+function modelFor(posts: readonly Post[], payload: ReturnType<typeof classifiedOutlook>) {
+  const handle = posts[0]?.authorHandle ?? "analyst";
+  return aliasModel(planAnalysisInput([...posts], handle).sent, payload);
+}
 const complete = { retrievalComplete: true as const };
 
 function post(overrides: Partial<Post> & Pick<Post, "id" | "kind" | "text">): Post {
@@ -176,11 +183,11 @@ describe("LlmOutlookAnalyzer", () => {
       }),
       post({ id: "r1", kind: "repost", text: "REPOST TEXT SHOULD NOT APPEAR" }),
     ];
-    const ok = recordingTransport(completion(classifiedOutlook({
+    const ok = recordingTransport(completion(modelFor(posts, classifiedOutlook({
       outlook: "cautious",
       explanation: "The commentary is cautious.",
       posts: [{ postId: "q1", relevant: true, asset_class: "macro", stance: "bearish" }],
-    })));
+    }))));
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), ok.transport);
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.equal(ok.calls.length, 1);
@@ -201,18 +208,22 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(report.postsExamined, 1);
     assert.equal(report.providerUsage?.totalTokens, 18);
 
-    for (const postsPayload of [
-      [{ postId: "missing", relevant: true, asset_class: "macro" as const, stance: "bearish" as const }],
-      [
-        { postId: "q1", relevant: true, asset_class: "macro" as const, stance: "bearish" as const },
-        { postId: "q1", relevant: true, asset_class: "macro" as const, stance: "bearish" as const },
-      ],
-    ]) {
-      const recorded = recordingTransport(completion(classifiedOutlook({
+    for (const payload of [
+      classifiedOutlook({
         outlook: "cautious",
         explanation: "Bad citations.",
-        posts: postsPayload,
-      })));
+        posts: [{ postId: "missing", relevant: true, asset_class: "macro", stance: "bearish" }],
+      }),
+      classifiedOutlook({
+        outlook: "cautious",
+        explanation: "Bad citations.",
+        posts: [{ postId: "q1", relevant: true, asset_class: "macro", stance: "bearish" }],
+        assetOutlooks: [
+          { asset_class: "macro", outlook: "cautious", evidencePostIds: ["missing"] },
+        ],
+      }),
+    ]) {
+      const recorded = recordingTransport(completion(modelFor(posts, payload)));
       const failing = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
       await assert.rejects(
         () => failing.analyzePerson("analyst", posts, question, complete),
@@ -326,16 +337,17 @@ describe("LlmOutlookAnalyzer", () => {
         buildChatMessages(question.text, fitted.sent, "2026-10-10", "desearch"),
         PRICED_LLM_MODEL,
         maxTokens,
+        postAliases(fitted.sent).map((item) => item.alias),
       ),
     );
     assert.equal(fitsModelContextWindow(estimate.inputTokensUpper, maxTokens), true);
     assert.ok(estimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
 
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const recorded = recordingTransport(completion(aliasModel(fitted.sent, classifiedOutlook({
       outlook: "unclear",
       explanation: "The remaining posts do not support a stance.",
       posts: fitted.sent.map((item) => ({ postId: item.post.id, relevant: false })),
-    })));
+    }))));
     const analyzer = new LlmOutlookAnalyzer(
       liveConfig(),
       recorded.transport,
@@ -351,9 +363,12 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(body.max_tokens, maxTokens);
     const prompt = body.messages.map((message) => message.content).join("\n");
     for (const record of dropped) {
-      assert.equal(prompt.includes(`postId: ${record.postId}`), false);
+      assert.equal(prompt.includes(record.postId), false);
     }
-    assert.match(prompt, new RegExp(`postId: ${fitted.sent[0]!.post.id}`));
+    assert.match(prompt, /alias: p1/);
+    for (const item of fitted.sent) {
+      assert.equal(prompt.includes(item.post.id), false);
+    }
     assert.equal(
       report.analysisInput?.filter((record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON)
         .length,
@@ -390,18 +405,19 @@ describe("LlmOutlookAnalyzer", () => {
         buildChatMessages(question.text, modestPlan.sent, "2026-10-10", "desearch"),
         PRICED_LLM_MODEL,
         classificationOutputTokenCeiling(modestPlan.sent.length),
+        postAliases(modestPlan.sent).map((item) => item.alias),
       ),
     );
     assert.equal(modestPlan.sent.length, 60);
     assert.ok(modestEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
-    assert.equal(fitsModelContextWindow(modestEstimate.inputTokensUpper, modestEstimate.outputTokensUpper), true);
+    assert.equal(fitsModelContextWindow(modestEstimate.inputTokensUpper, modestEstimate.outputTokensUpper), false);
 
-    const ordinaryCases = [31, 48, 56, 60] as const;
+    const ordinaryCases = [20, 31, 40, 45] as const;
     const expected = {
-      31: { input: 9259, output: 9759, usd: 0.005023 },
-      48: { input: 12252, output: 14043, usd: 0.007116 },
-      56: { input: 13660, output: 16059, usd: 0.008101 },
-      60: { input: 14364, output: 17067, usd: 0.008594 },
+      20: { input: 14331, output: 6109, usd: 0.004032 },
+      31: { input: 20282, output: 8408, usd: 0.005607 },
+      40: { input: 25152, output: 10289, usd: 0.006896 },
+      45: { input: 27857, output: 11334, usd: 0.007612 },
     } as const;
     for (const count of ordinaryCases) {
       const slice = Array.from({ length: count }, (_, index) =>
@@ -417,6 +433,7 @@ describe("LlmOutlookAnalyzer", () => {
           buildChatMessages(question.text, slicePlan.sent, "2026-10-10", "desearch"),
           PRICED_LLM_MODEL,
           classificationOutputTokenCeiling(slicePlan.sent.length),
+          postAliases(slicePlan.sent).map((item) => item.alias),
         ),
       );
       const want = expected[count];
@@ -444,6 +461,7 @@ describe("LlmOutlookAnalyzer", () => {
           buildChatMessages(question.text, tinyPlan.sent, "2026-10-10", "desearch"),
           recorded.transport,
           classificationOutputTokenCeiling(tinyPlan.sent.length),
+          postAliases(tinyPlan.sent).map((item) => item.alias),
         ),
       (err: unknown) => err instanceof LlmCallError && err.code === "budget",
     );
@@ -467,15 +485,16 @@ describe("LlmOutlookAnalyzer", () => {
 
   it("discloses truncation and keeps retrieval coverage separate", async () => {
     const text = `${"a".repeat(1000)}ENDMARK`;
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const onePost = [post({ id: "o1", kind: "original", text, timestamp: "2026-09-02T00:00:00.000Z" })];
+    const recorded = recordingTransport(completion(modelFor(onePost, classifiedOutlook({
       outlook: "unclear",
       explanation: "Not enough to call a stance.",
       posts: [{ postId: "o1", relevant: false }],
-    }), { usage: null }));
+    })), { usage: null }));
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
     const report = await analyzer.analyzePerson(
       "analyst",
-      [post({ id: "o1", kind: "original", text, timestamp: "2026-09-02T00:00:00.000Z" })],
+      onePost,
       question,
       { retrievalComplete: false, incompleteReason: "per_person_limit_reached" },
     );
@@ -601,7 +620,7 @@ describe("LlmOutlookAnalyzer", () => {
         timestamp: "2026-10-09T18:00:00.000Z",
       }),
     ];
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const recorded = recordingTransport(completion(modelFor(posts, classifiedOutlook({
       outlook: "cautious",
       explanation: "The two market posts are cautious. The other posts are unrelated.",
       posts: [
@@ -619,7 +638,7 @@ describe("LlmOutlookAnalyzer", () => {
           stance: "bearish" as const,
         },
       ],
-    })));
+    }))));
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.deepEqual(
@@ -634,11 +653,11 @@ describe("LlmOutlookAnalyzer", () => {
     for (const item of report.evidence) {
       assert.equal(sentIds.has(item.postId), true);
     }
-    const rejected = recordingTransport(completion(classifiedOutlook({
+    const rejected = recordingTransport(completion(modelFor(posts, classifiedOutlook({
       outlook: "cautious",
       explanation: "Cited a post that was not sent.",
       posts: [{ postId: "repost-1", relevant: true, asset_class: "macro", stance: "bearish" }],
-    })));
+    }))));
     const rejecting = new LlmOutlookAnalyzer(liveConfig(), rejected.transport, "2026-10-10");
     await assert.rejects(
       () => rejecting.analyzePerson("analyst", posts, question, complete),
@@ -665,7 +684,7 @@ describe("LlmOutlookAnalyzer", () => {
         timestamp: "2026-10-09T00:00:00.000Z",
       }),
     ];
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const recorded = recordingTransport(completion(modelFor(posts, classifiedOutlook({
       outlook: "cautious",
       explanation: "The only market post is an older comment on duration.",
       posts: [
@@ -677,7 +696,7 @@ describe("LlmOutlookAnalyzer", () => {
           stance: "bullish",
         },
       ],
-    })));
+    }))));
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
     const report = await analyzer.analyzePerson("analyst", posts, question, {
       retrievalComplete: true,
@@ -713,20 +732,21 @@ describe("LlmOutlookAnalyzer", () => {
   });
 
   it("reports removed duplicate ids and media the model cannot see", async () => {
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const mediaPosts = [post({
+      id: "m1",
+      kind: "original" as const,
+      text: "A walk in the park.",
+      hasAttachedMedia: true,
+    })];
+    const recorded = recordingTransport(completion(modelFor(mediaPosts, classifiedOutlook({
       outlook: "unclear",
       explanation: "The post is not about markets.",
       posts: [{ postId: "m1", relevant: false }],
-    })));
+    }))));
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
     const report = await analyzer.analyzePerson(
       "analyst",
-      [post({
-        id: "m1",
-        kind: "original",
-        text: "A walk in the park.",
-        hasAttachedMedia: true,
-      })],
+      mediaPosts,
       question,
       { retrievalComplete: true, duplicatePostsRemoved: 1 },
     );
@@ -744,15 +764,16 @@ describe("LlmOutlookAnalyzer", () => {
   });
 
   it("sends sarcasm, conflict, staleness, and interpretation rules with the reference date", async () => {
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const rulePosts = [post({ id: "o1", kind: "original" as const, text: "Maybe constructive if payroll holds." })];
+    const recorded = recordingTransport(completion(modelFor(rulePosts, classifiedOutlook({
       outlook: "unclear",
       explanation: "The fixture text does not support a stance.",
       posts: [{ postId: "o1", relevant: false }],
-    })));
+    }))));
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-09-22");
     const report = await analyzer.analyzePerson(
       "analyst",
-      [post({ id: "o1", kind: "original", text: "Maybe constructive if payroll holds." })],
+      rulePosts,
       question,
       complete,
     );
@@ -805,14 +826,14 @@ describe("runLlmFixtureCheck", () => {
   });
 
   it("posts the edited fixture handle with max_tokens and prints the estimate before usage", async () => {
-    const recorded = recordingTransport(completion(classifiedOutlook({
+    const recorded = recordingTransport(completion(modelFor(FIXTURE_POSTS_BY_HANDLE.bullmacro, classifiedOutlook({
       outlook: "bullish",
       explanation: "The originals are constructive.",
       posts: [
         { postId: "b1", relevant: true, asset_class: "macro", stance: "bullish" },
         { postId: "b2", relevant: true, asset_class: "equities", stance: "bullish" },
       ],
-    })));
+    }))));
     let output = "";
     const code = await runLlmFixtureCheck({
       handle: "bullmacro",
@@ -910,13 +931,13 @@ describe("runLlmFixtureCheck", () => {
         failure: /max_tokens was exhausted/,
       },
       {
-        response: completion(classifiedOutlook({
+        response: completion(modelFor(FIXTURE_POSTS_BY_HANDLE.bullmacro, classifiedOutlook({
           outlook: "bullish",
           explanation: "Should not become a report.",
           posts: [{ postId: "missing", relevant: true, asset_class: "macro", stance: "bullish" }],
-        }), { usage: { prompt_tokens: 12, completion_tokens: 9, total_tokens: 21 } }),
+        })), { usage: { prompt_tokens: 12, completion_tokens: 9, total_tokens: 21 } }),
         usage: "prompt_tokens=12",
-        failure: /Citation id missing/,
+        failure: /Unknown alias missing/,
       },
       {
         response: completion("not-json", {

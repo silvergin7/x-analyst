@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { planAnalysisInput } from "../src/analyze/analysisInput.js";
-import { checkClassifications, parseModelOutlook } from "../src/analyze/classification.js";
+import {
+  checkClassifications,
+  parseModelOutlook,
+  resolveAliasClassifications,
+} from "../src/analyze/classification.js";
+import { postAliases } from "../src/analyze/postAliases.js";
 import { LlmCitationError, LlmOutputError } from "../src/analyze/llmErrors.js";
 import { CLASSIFICATION_REASON_MAX_CHARS } from "../src/analyze/outputBudget.js";
 import { buildSystemPrompt, buildUserPrompt } from "../src/analyze/llmPrompt.js";
 import { BEYOND_INPUT_BUDGET_REASON } from "../src/analyze/analysisInput.js";
 import { LLM_MAX_QUOTE_CONTEXT_CHARS } from "../src/config/llmSettings.js";
 import type { Post } from "../src/types.js";
-import { classifiedOutlook } from "./classifiedOutlook.js";
+import { aliasModel, classifiedOutlook } from "./classifiedOutlook.js";
 
 function post(overrides: Partial<Post> & Pick<Post, "id" | "kind" | "text">): Post {
   return {
@@ -48,7 +53,16 @@ const marketPosts = [
 
 function checked(payload: ReturnType<typeof classifiedOutlook>) {
   const plan = planAnalysisInput(marketPosts, "analyst");
-  return checkClassifications(plan.sent, parseModelOutlook(JSON.stringify(payload)), "2026-10-10");
+  const aliases = postAliases(plan.sent);
+  const parsed = parseModelOutlook(
+    JSON.stringify(aliasModel(plan.sent, payload)),
+    aliases.map((item) => item.alias),
+  );
+  return checkClassifications(
+    plan.sent,
+    resolveAliasClassifications(aliases, parsed),
+    "2026-10-10",
+  );
 }
 
 describe("post classification", () => {
@@ -101,7 +115,7 @@ describe("post classification", () => {
         })),
       (err: unknown) =>
         err instanceof LlmCitationError &&
-        /Classification missing sent id rates-old/.test(err.message),
+        /Unclassified posts were 1 of 4, above the 10% limit/.test(err.message),
     );
   });
 
@@ -118,17 +132,27 @@ describe("post classification", () => {
       ],
     });
     const plan = planAnalysisInput(marketPosts, "analyst");
+    const aliases = postAliases(plan.sent);
+    const aliasNames = aliases.map((item) => item.alias);
+    const acceptedModel = aliasModel(plan.sent, accepted);
     assert.equal(reason.length, 120);
     assert.doesNotThrow(() =>
-      checkClassifications(plan.sent, parseModelOutlook(JSON.stringify(accepted)), "2026-10-10"),
+      checkClassifications(
+        plan.sent,
+        resolveAliasClassifications(
+          aliases,
+          parseModelOutlook(JSON.stringify(acceptedModel), aliasNames),
+        ),
+        "2026-10-10",
+      ),
     );
-    accepted.posts[0]!.reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 1);
+    acceptedModel.posts[aliases[0]!.alias]!.reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 1);
     assert.throws(
-      () => parseModelOutlook(JSON.stringify(accepted)),
+      () => parseModelOutlook(JSON.stringify(acceptedModel), aliasNames),
       (err: unknown) =>
         err instanceof LlmOutputError && /reason exceeded the character bound/.test(err.message),
     );
-    const tooManyWords = classifiedOutlook({
+    const tooManyWords = aliasModel(plan.sent, classifiedOutlook({
       outlook: "unclear",
       explanation: "Too many words in one reason.",
       posts: [
@@ -137,10 +161,11 @@ describe("post classification", () => {
         { postId: "crypto-b", relevant: false },
         { postId: "rates-old", relevant: false },
       ],
-    });
-    assert.ok(tooManyWords.posts[0]!.reason.length <= CLASSIFICATION_REASON_MAX_CHARS);
+    }));
+    const longReason = tooManyWords.posts[aliases[0]!.alias]!.reason;
+    assert.ok(longReason.length <= CLASSIFICATION_REASON_MAX_CHARS);
     assert.throws(
-      () => parseModelOutlook(JSON.stringify(tooManyWords)),
+      () => parseModelOutlook(JSON.stringify(tooManyWords), aliasNames),
       (err: unknown) => err instanceof LlmOutputError && /exceeded 20 words/.test(err.message),
     );
   });
@@ -217,8 +242,120 @@ describe("post classification", () => {
         })),
       (err: unknown) =>
         err instanceof LlmCitationError &&
-        /Citation id 2104906619062538582 was not in the model input/.test(err.message),
+        /Unknown alias 2104906619062538582/.test(err.message),
     );
+  });
+
+  it("rejects an unknown alias from parseModelOutlook alone", () => {
+    const content = JSON.stringify({
+      outlook: "unclear",
+      explanation: "An extra alias was included.",
+      posts: {
+        missing: {
+          relevant: false,
+          asset_class: "none",
+          stance: "unclear",
+          reason: "Not about markets.",
+        },
+      },
+      assetOutlooks: [],
+    });
+    assert.throws(
+      () => parseModelOutlook(content, ["p1"]),
+      (err: unknown) => err instanceof LlmCitationError && err.message === "Unknown alias missing",
+    );
+  });
+
+  it("rejects an unknown alias from resolveAliasClassifications alone", () => {
+    const plan = planAnalysisInput([marketPosts[0]], "analyst");
+    const aliases = postAliases(plan.sent);
+    assert.equal(aliases[0]?.alias, "p1");
+    assert.throws(
+      () =>
+        resolveAliasClassifications(aliases, {
+          outlook: "unclear",
+          explanation: "An extra alias was included.",
+          posts: [
+            {
+              postId: "missing",
+              relevant: false,
+              assetClass: "none",
+              stance: "unclear",
+              reason: "Not about markets.",
+            },
+          ],
+          assetOutlooks: [],
+        }),
+      (err: unknown) => err instanceof LlmCitationError && err.message === "Unknown alias missing",
+    );
+  });
+
+  it("allows one unclassified post in ten and fails two", () => {
+    const posts = Array.from({ length: 10 }, (_, index) =>
+      post({
+        id: `n${index + 1}`,
+        kind: "original",
+        text: "No market view here.",
+        timestamp: `2026-10-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+      }),
+    );
+    const plan = planAnalysisInput(posts, "analyst");
+    const aliases = postAliases(plan.sent);
+    const names = aliases.map((item) => item.alias);
+    const oneMissing = Object.fromEntries(
+      aliases.slice(1).map((item) => [
+        item.alias,
+        {
+          relevant: false,
+          asset_class: "none",
+          stance: "unclear",
+          reason: "Not about markets.",
+        },
+      ]),
+    );
+    const allowed = resolveAliasClassifications(
+      aliases,
+      parseModelOutlook(
+        JSON.stringify({
+          outlook: "unclear",
+          explanation: "No market stance in these posts.",
+          posts: oneMissing,
+          assetOutlooks: [],
+        }),
+        names,
+      ),
+    );
+    const missing = allowed.posts.find((item) => item.reason === "unclassified_by_model");
+    assert.equal(missing?.postId, aliases[0]?.post.post.id);
+    assert.equal(allowed.posts.length, 10);
+    const twoMissing = { ...oneMissing };
+    delete twoMissing[aliases[1]!.alias];
+    assert.throws(
+      () =>
+        resolveAliasClassifications(
+          aliases,
+          parseModelOutlook(
+            JSON.stringify({
+              outlook: "unclear",
+              explanation: "No market stance in these posts.",
+              posts: twoMissing,
+              assetOutlooks: [],
+            }),
+            names,
+          ),
+        ),
+      (err: unknown) =>
+        err instanceof LlmCitationError &&
+        /Unclassified posts were 2 of 10, above the 10% limit/.test(err.message),
+    );
+  });
+
+  it("shows aliases in the prompt and leaves the post id out", () => {
+    const plan = planAnalysisInput(marketPosts, "analyst");
+    const prompt = buildUserPrompt("What is the outlook?", plan.sent);
+    assert.match(prompt, /alias: p1/);
+    assert.equal(prompt.includes("crypto-a"), false);
+    assert.equal(prompt.includes("postId:"), false);
   });
 });
 

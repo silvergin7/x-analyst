@@ -9,9 +9,6 @@ export const CLASSIFICATION_REASON_MAX_WORDS = 20;
  */
 export const CLASSIFICATION_REASON_MAX_CHARS = 120;
 
-/** Snowflake-sized id used only to size the worst-case output. */
-const OUTPUT_ID_CHARS = 20;
-
 /** Longest class name first, so the worst-case JSON uses the longest labels. */
 const OUTPUT_ASSET_CLASSES = [
   "rates_bonds",
@@ -25,34 +22,37 @@ const OUTPUT_ASSET_CLASSES = [
 /**
  * Pessimistic output-token ceiling for one classification response.
  * One token per UTF-8 byte of the largest JSON the schema can return
- * for this many posts. Each id is cited once, in the outlook for its
+ * for this many posts. Each alias is cited once, in the outlook for its
  * own asset class. Reasons are at the character bound.
  */
 export function classificationOutputTokenCeiling(sentCount: number): number {
   const count = sentCount < 1 ? 1 : sentCount;
-  const postId = "1".repeat(OUTPUT_ID_CHARS);
   const reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS);
   const classCount = Math.min(count, OUTPUT_ASSET_CLASSES.length);
   const classes = OUTPUT_ASSET_CLASSES.slice(0, classCount);
-  const posts: Array<{
-    postId: string;
-    relevant: true;
-    asset_class: (typeof OUTPUT_ASSET_CLASSES)[number];
-    stance: "unclear";
-    reason: string;
-  }> = [];
+  const posts: Record<
+    string,
+    {
+      relevant: true;
+      asset_class: (typeof OUTPUT_ASSET_CLASSES)[number];
+      stance: "unclear";
+      reason: string;
+    }
+  > = {};
+  let aliasIndex = 0;
   const assetOutlooks = classes.map((asset_class, index) => {
     const n = index === 0 ? count - (classCount - 1) : 1;
     const evidencePostIds: string[] = [];
     for (let i = 0; i < n; i++) {
-      posts.push({
-        postId,
+      aliasIndex += 1;
+      const alias = `p${aliasIndex}`;
+      posts[alias] = {
         relevant: true,
         asset_class,
         stance: "unclear",
         reason,
-      });
-      evidencePostIds.push(postId);
+      };
+      evidencePostIds.push(alias);
     }
     return {
       asset_class,

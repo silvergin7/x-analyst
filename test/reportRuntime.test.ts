@@ -95,12 +95,12 @@ function promptText(body: string): string {
 function classified(
   outlook: "bullish" | "bearish" | "cautious" | "mixed" | "unclear",
   explanation: string,
-  ids: string[],
+  aliases: string[],
 ) {
-  return classifiedOutlook({
+  const payload = classifiedOutlook({
     outlook,
     explanation,
-    posts: ids.map((postId) => ({
+    posts: aliases.map((postId) => ({
       postId,
       relevant: outlook !== "unclear",
       asset_class: outlook === "unclear" ? ("none" as const) : ("macro" as const),
@@ -112,6 +112,22 @@ function classified(
             : ("unclear" as const),
     })),
   });
+  return {
+    outlook: payload.outlook,
+    explanation: payload.explanation,
+    posts: Object.fromEntries(
+      payload.posts.map((post) => [
+        post.postId,
+        {
+          relevant: post.relevant,
+          asset_class: post.asset_class,
+          stance: post.stance,
+          reason: post.reason,
+        },
+      ]),
+    ),
+    assetOutlooks: payload.assetOutlooks,
+  };
 }
 
 describe("runReport live gates", () => {
@@ -120,7 +136,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport({
       outlook: "bullish",
       explanation: "Should not be used.",
-      evidencePostIds: ["live-1"],
+      evidencePostIds: ["p1"],
     });
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
@@ -143,7 +159,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport({
       outlook: "bullish",
       explanation: "Should not be used.",
-      evidencePostIds: ["live-1"],
+      evidencePostIds: ["p1"],
     });
     const options = {
       referenceDate: "2026-11-02",
@@ -202,7 +218,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport(classified(
       "bullish",
       "The supplied original says growth remains constructive.",
-      ["live-1"],
+      ["p1"],
     ));
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
@@ -260,7 +276,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport(classified(
       "bullish",
       "The supplied originals say growth remains constructive.",
-      ["live-1", "live-2"],
+      ["p1", "p2"],
     ));
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
@@ -323,7 +339,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport(classified(
       "cautious",
       "The supplied commentary is about duration.",
-      ["quote-own"],
+      ["p1"],
     ));
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
@@ -403,7 +419,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport(classified(
       "bullish",
       "The supplied original says growth remains constructive.",
-      ["live-1"],
+      ["p1"],
     ));
     const first = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
@@ -484,7 +500,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport(classified(
       "bullish",
       "The fixture originals are constructive.",
-      ["b1", "b2"],
+      ["p1", "p2"],
     ));
     await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
@@ -537,7 +553,7 @@ describe("runReport live gates", () => {
                     content: JSON.stringify(classified(
                       "bullish",
                       "The supplied original says growth remains constructive.",
-                      ["live-1"],
+                      ["p1"],
                     )),
                     refusal: null,
                   },
@@ -621,7 +637,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport({
       outlook: "bullish",
       explanation: "Should not be used.",
-      evidencePostIds: ["live-1"],
+      evidencePostIds: ["p1"],
     });
     const cache = createFetchSliceCache();
     await assert.rejects(
@@ -772,7 +788,7 @@ describe("runReport live gates", () => {
     const model = chutesTransport(classified(
       "bullish",
       "The supplied originals say growth remains constructive.",
-      ["b1", "b2"],
+      ["p1", "p2"],
     ));
     await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",

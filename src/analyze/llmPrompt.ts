@@ -6,7 +6,8 @@ import {
 } from "../config/llmSettings.js";
 import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import type { BudgetEstimate, PostSource } from "../types.js";
-import { comparePostTime, type SentPost } from "./analysisInput.js";
+import { postAliases } from "./postAliases.js";
+import type { SentPost } from "./analysisInput.js";
 
 export interface ChatMessage {
   role: "system" | "user";
@@ -42,13 +43,14 @@ export function buildSystemPrompt(
     "Choose one overall outlook: bullish, bearish, cautious, mixed, or unclear.",
     "Use mixed when relevant posts in different asset classes do not support one stance.",
     "Use unclear when the supplied text cannot support a market stance.",
-    "Return one posts entry for every supplied postId, each exactly once.",
-    "Each entry has relevant, asset_class, stance, and a reason of at most 20 words and 120 characters.",
+    "Each supplied post has an alias such as p1 or p2. Refer to posts only by those aliases.",
+    "Return a posts object whose keys are those aliases.",
+    "Each value has relevant, asset_class, stance, and a reason of at most 20 words and 120 characters.",
     "asset_class is equities, rates_bonds, crypto, commodities, fx, macro, or none.",
     "Use none only when relevant is false.",
     "stance is bullish, bearish, neutral, or unclear.",
     "Return an outlook for each asset class that has at least one relevant post.",
-    "Cite each postId in at most one asset outlook, and only in the outlook for that post's asset class.",
+    "Cite each alias in at most one asset outlook, and only in the outlook for that post's asset class.",
     "Return only the JSON object required by the schema.",
   ].join("\n");
 }
@@ -65,11 +67,10 @@ const ASSET_CLASS_ENUM = [
 
 const OUTLOOK_ENUM = ["bullish", "bearish", "cautious", "mixed", "unclear"] as const;
 
-const POST_CLASSIFICATION_SCHEMA = {
+const POST_VALUE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    postId: { type: "string" },
     relevant: { type: "boolean" },
     asset_class: { type: "string", enum: ASSET_CLASS_ENUM },
     stance: {
@@ -78,8 +79,19 @@ const POST_CLASSIFICATION_SCHEMA = {
     },
     reason: { type: "string" },
   },
-  required: ["postId", "relevant", "asset_class", "stance", "reason"],
+  required: ["relevant", "asset_class", "stance", "reason"],
 } as const;
+
+function postsSchema(aliases: readonly string[]) {
+  const properties: Record<string, typeof POST_VALUE_SCHEMA> = {};
+  for (const alias of aliases) properties[alias] = POST_VALUE_SCHEMA;
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties,
+    required: [...aliases],
+  };
+}
 
 const ASSET_OUTLOOK_SCHEMA = {
   type: "object",
@@ -95,24 +107,26 @@ const ASSET_OUTLOOK_SCHEMA = {
   required: ["asset_class", "outlook", "evidencePostIds"],
 } as const;
 
-const OUTLOOK_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    outlook: { type: "string", enum: OUTLOOK_ENUM },
-    explanation: { type: "string" },
-    posts: { type: "array", items: POST_CLASSIFICATION_SCHEMA },
-    assetOutlooks: { type: "array", items: ASSET_OUTLOOK_SCHEMA },
-  },
-  required: ["outlook", "explanation", "posts", "assetOutlooks"],
-} as const;
+function outlookSchema(aliases: readonly string[]) {
+  return {
+    type: "object" as const,
+    additionalProperties: false as const,
+    properties: {
+      outlook: { type: "string" as const, enum: OUTLOOK_ENUM },
+      explanation: { type: "string" as const },
+      posts: postsSchema(aliases),
+      assetOutlooks: { type: "array" as const, items: ASSET_OUTLOOK_SCHEMA },
+    },
+    required: ["outlook", "explanation", "posts", "assetOutlooks"] as const,
+  };
+}
 
-export function outlookResponseFormat(): {
+export function outlookResponseFormat(aliases: readonly string[] = ["p1"]): {
   type: "json_schema";
   json_schema: {
     name: "person_outlook";
     strict: true;
-    schema: typeof OUTLOOK_SCHEMA;
+    schema: ReturnType<typeof outlookSchema>;
   };
 } {
   return {
@@ -120,7 +134,7 @@ export function outlookResponseFormat(): {
     json_schema: {
       name: "person_outlook",
       strict: true,
-      schema: OUTLOOK_SCHEMA,
+      schema: outlookSchema(aliases),
     },
   };
 }
@@ -136,12 +150,12 @@ export interface ChutesRequestBody {
   response_format: ReturnType<typeof outlookResponseFormat>;
 }
 
-/** User message lists only posts that are sent, newest first by parsed timestamp. */
+/** User message lists only posts that are sent, newest first, under aliases p1, p2, and so on. */
 export function buildUserPrompt(question: string, sent: SentPost[]): string {
-  const ordered = [...sent].sort((a, b) => comparePostTime(b.post, a.post));
-  const blocks = ordered.map((item) => {
+  const blocks = postAliases(sent).map((entry) => {
+    const item = entry.post;
     const lines = [
-      `postId: ${item.post.id}`,
+      `alias: ${entry.alias}`,
       `timestamp: ${item.post.timestamp}`,
       `kind: ${item.post.kind}`,
       item.truncated
@@ -187,6 +201,7 @@ export function buildChutesRequestBody(
   messages: ChatMessage[],
   model: string = PRICED_LLM_MODEL,
   maxTokens: number = classificationOutputTokenCeiling(1),
+  aliases: readonly string[] = ["p1"],
 ): ChutesRequestBody {
   return {
     model,
@@ -196,7 +211,7 @@ export function buildChutesRequestBody(
     top_p: LLM_NON_THINKING_SAMPLING.top_p,
     top_k: LLM_NON_THINKING_SAMPLING.top_k,
     stream: false,
-    response_format: outlookResponseFormat(),
+    response_format: outlookResponseFormat(aliases),
   };
 }
 

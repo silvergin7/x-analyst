@@ -1,3 +1,6 @@
+import type { SentPost } from "../src/analyze/analysisInput.js";
+import { postAliases } from "../src/analyze/postAliases.js";
+
 /** Build a valid classification payload for fake model responses. */
 export function classifiedOutlook(input: {
   outlook: "bullish" | "bearish" | "cautious" | "mixed" | "unclear";
@@ -56,5 +59,35 @@ export function classifiedOutlook(input: {
     explanation: input.explanation,
     posts,
     assetOutlooks,
+  };
+}
+
+/** Model JSON: alias keys, with real ids mapped from the sent posts. Unknown ids stay unknown aliases. */
+export function aliasModel(
+  sent: readonly SentPost[],
+  payload: ReturnType<typeof classifiedOutlook>,
+) {
+  const aliasById = new Map(postAliases(sent).map((item) => [item.post.post.id, item.alias]));
+  const posts: Record<
+    string,
+    { relevant: boolean; asset_class: string; stance: string; reason: string }
+  > = {};
+  for (const post of payload.posts) {
+    posts[aliasById.get(post.postId) ?? post.postId] = {
+      relevant: post.relevant,
+      asset_class: post.asset_class,
+      stance: post.stance,
+      reason: post.reason,
+    };
+  }
+  return {
+    outlook: payload.outlook,
+    explanation: payload.explanation,
+    posts,
+    assetOutlooks: payload.assetOutlooks.map((item) => ({
+      asset_class: item.asset_class,
+      outlook: item.outlook,
+      evidencePostIds: item.evidencePostIds.map((id) => aliasById.get(id) ?? id),
+    })),
   };
 }

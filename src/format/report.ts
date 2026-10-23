@@ -1,3 +1,4 @@
+import { UNCLASSIFIED_BY_MODEL_REASON } from "../analyze/classification.js";
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
 import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.js";
 import { formatProviderUsage } from "./llmFixtureReport.js";
@@ -86,6 +87,14 @@ export function formatPersonReport(report: PersonOutlookReport): string {
   }
   if (report.newestRelevantPostAt) {
     lines.push(`  Newest relevant post: ${report.newestRelevantPostAt}`);
+  }
+  const unclassified =
+    report.classifications?.filter((item) => item.reason === UNCLASSIFIED_BY_MODEL_REASON) ??
+    [];
+  if (unclassified.length > 0) {
+    lines.push(
+      `  Unclassified by model: ${unclassified.map((item) => item.postId).join(", ")}`,
+    );
   }
   if (report.viewMayBeStale && !report.assetOutlooks?.some((item) => item.viewMayBeStale)) {
     lines.push(
