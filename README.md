@@ -26,6 +26,19 @@ It stays a single-user local tool: a manual roster, with no accounts, hosted dep
 npm install
 ```
 
+## Qwen3 tokenizer (local input budget)
+
+Live and non-test runs load **`vendor/qwen3-32b-fp8/`** only. Copy the tokenizer files from Hugging Face model **`Qwen/Qwen3-32B-FP8`** at revision **`aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`** (Apache-2.0). The folder is gitignored.
+
+| File | Bytes | SHA-256 |
+|------|------:|---------|
+| `tokenizer.json` | 11,422,654 | `aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4` |
+| `tokenizer_config.json` | 9,732 | `d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101` |
+
+The app verifies both checksums before counting tokens and stops if either file is missing or wrong. Optional `LLM_TOKENIZER_DIR` may point at another directory, but the files there must match the same sizes and checksums.
+
+Input tokens use the official `chat_template` from `tokenizer_config.json` (rendered with `@huggingface/jinja`), plus the strict `response_format` JSON counted separately (conservative). A calibration margin is added on top of message tokens: **`max(128, ceil(0.02 × messageTokens))`**. The context-window check still reserves **1,024** tokens below the 40,960 window. Output `max_tokens` uses a byte pessimistic worst-case JSON ceiling plus tokenized empty `<think>` wrapper text.
+
 ## CLI
 
 Default handles (`bullmacro`, `bearmacro`, `unclearmacro`) and default question:

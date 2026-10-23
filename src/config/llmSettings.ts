@@ -51,6 +51,10 @@ export const LLM_REQUEST_TIMEOUT_MS = 30_000;
  */
 export const LLM_FRAMING_TOKENS_PER_MESSAGE = 32;
 
+export const LLM_TOKENIZER_CALIBRATION_FIXED = 128;
+
+export const LLM_TOKENIZER_CALIBRATION_RATIO = 0.02;
+
 export const LLM_API_KEY_PLACEHOLDER = "replace_me_only_when_you_are_ready";
 
 /**

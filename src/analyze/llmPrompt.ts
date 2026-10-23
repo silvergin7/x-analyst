@@ -1,9 +1,5 @@
-import {
-  LLM_FRAMING_TOKENS_PER_MESSAGE,
-  LLM_NON_THINKING_SAMPLING,
-  PRICED_LLM_MODEL,
-  priceTokenCeiling,
-} from "../config/llmSettings.js";
+import { LLM_NON_THINKING_SAMPLING, PRICED_LLM_MODEL } from "../config/llmSettings.js";
+import { estimateRequestBudgetFromTokenizer } from "./tokenBudget.js";
 import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import type { BudgetEstimate, PostSource } from "../types.js";
 import { postAliases } from "./postAliases.js";
@@ -215,17 +211,9 @@ export function buildChutesRequestBody(
   };
 }
 
-/**
- * One token per UTF-8 byte of the serialized request, plus a fixed
- * per-message framing allowance. This is a ceiling, not tokenizer output
- * and not provider-reported usage.
- */
-export function estimateRequestBudget(body: ChutesRequestBody): BudgetEstimate {
-  const bytes = Buffer.byteLength(JSON.stringify(body), "utf8");
-  const inputTokensUpper = bytes + body.messages.length * LLM_FRAMING_TOKENS_PER_MESSAGE;
-  const priced = priceTokenCeiling(inputTokensUpper, body.max_tokens);
-  return {
-    ...priced,
-    basis: "pessimistic-utf8-bytes-plus-framing",
-  };
+export function estimateRequestBudget(
+  body: ChutesRequestBody,
+  env: NodeJS.ProcessEnv = process.env,
+): BudgetEstimate {
+  return estimateRequestBudgetFromTokenizer(body, env);
 }

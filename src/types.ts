@@ -222,7 +222,10 @@ export interface BudgetEstimate {
   inputTokensUpper: number;
   outputTokensUpper: number;
   estimatedUsd: number;
-  basis: "pessimistic-utf8-bytes-plus-framing";
+  basis: "qwen3-tokenizer-conservative";
+  messageTokens?: number;
+  responseFormatTokens?: number;
+  calibrationMarginTokens?: number;
 }
 
 export interface AnalysisQuestion {
