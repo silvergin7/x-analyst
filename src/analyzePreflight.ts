@@ -15,6 +15,10 @@ import {
   desearchWorstCaseListPriceUsd,
   sampleDesearchRequest,
 } from "./runtime/desearchPreflight.js";
+import {
+  providerHostPreflightLines,
+  providerOverrideWarningLines,
+} from "./runtime/providerUrlPreflight.js";
 import type { Post } from "./types.js";
 
 function chutesEstimateForPosts(input: {
@@ -50,14 +54,14 @@ export function chutesWorstCaseEstimateUsd(input: {
   let total = 0;
   for (const handle of input.handles) {
     const modestUsd = chutesEstimateForPosts({
-      posts: modestPreflightPosts(input.maxRetrievedPostsPerHandle),
+      posts: modestPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
       handle,
       question: input.question,
       referenceDate: input.referenceDate,
       env: input.env,
     });
     const longUsd = chutesEstimateForPosts({
-      posts: longPreflightPosts(input.maxRetrievedPostsPerHandle),
+      posts: longPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
       handle,
       question: input.question,
       referenceDate: input.referenceDate,
@@ -68,7 +72,7 @@ export function chutesWorstCaseEstimateUsd(input: {
   return total;
 }
 
-export function printAnalyzePreflight(input: {
+export function buildAnalyzePreflightLines(input: {
   handles: readonly string[];
   question: string;
   referenceDate: string;
@@ -76,7 +80,22 @@ export function printAnalyzePreflight(input: {
   replay: boolean;
   offline: boolean;
   env: NodeJS.ProcessEnv;
-}): void {
+}): string[] {
+  const mode = { offline: input.offline, replay: input.replay };
+  const questionLine = input.question || DEFAULT_QUESTION;
+
+  if (input.offline) {
+    return [
+      `Handles: ${input.handles.join(", ")}`,
+      `Question: ${questionLine}`,
+      `Analysis reference date: ${input.referenceDate}`,
+      "DESEARCH_MAX_REQUESTS_PER_RUN: not required offline",
+      "DESEARCH_MAX_REQUESTS_PER_HANDLE: not required offline",
+      "Desearch: not used (offline)",
+      "Chutes: not used (offline)",
+    ];
+  }
+
   const sample = sampleDesearchRequest();
   const runBudget = loadDesearchRequestBudget(input.env);
   const perHandleCap = loadDesearchMaxRequestsPerHandle(input.env);
@@ -89,37 +108,55 @@ export function printAnalyzePreflight(input: {
         requestsPerHandle,
         sampleRequest: sample,
       });
+
   const lines = [
+    ...providerOverrideWarningLines(input.env, mode),
+    ...providerHostPreflightLines(input.env, mode),
     `Handles: ${input.handles.join(", ")}`,
-    `Question: ${input.question || DEFAULT_QUESTION}`,
+    `Question: ${questionLine}`,
     `Analysis reference date: ${input.referenceDate}`,
-    `DESEARCH_MAX_REQUESTS_PER_RUN: ${runBudget}`,
-    `DESEARCH_MAX_REQUESTS_PER_HANDLE: ${perHandleCap ?? "(unset)"}`,
-    `Chutes: one request per handle; model ${input.model}`,
-    describeDesearchCountOnWire(sample),
   ];
+
   if (input.replay) {
-    lines.push("Desearch worst-case list-price estimate: $0.000000 (replay; no Desearch fetch)");
-  } else if (desearch) {
     lines.push(
-      `Desearch worst-case list-price estimate (not a charge): usage_count ${desearch.usageCount}, list_price_usd ${desearch.listPriceUsd.toFixed(6)} (${desearch.basis})`,
+      "DESEARCH_MAX_REQUESTS_PER_RUN: not required for replay",
+      "DESEARCH_MAX_REQUESTS_PER_HANDLE: not required for replay",
+      `Chutes: one request per handle; model ${input.model}`,
+      "Desearch: not used (replay), $0.000000",
     );
-  }
-  if (input.offline) {
-    lines.push("Chutes worst-case local estimate (not a charge): skipped in --offline mode");
   } else {
-    const chutesEstimate = chutesWorstCaseEstimateUsd({
-      question: input.question,
-      referenceDate: input.referenceDate,
-      handles: input.handles,
-      maxRetrievedPostsPerHandle: desearch
-        ? desearch.postsPerRequest * requestsPerHandle
-        : 55,
-      env: input.env,
-    });
     lines.push(
-      `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} summed across handles`,
+      `DESEARCH_MAX_REQUESTS_PER_RUN: ${runBudget}`,
+      `DESEARCH_MAX_REQUESTS_PER_HANDLE: ${perHandleCap ?? "(unset)"}`,
+      `Chutes: one request per handle; model ${input.model}`,
+      describeDesearchCountOnWire(sample),
+      `Desearch worst-case list-price estimate (not a charge): usage_count ${desearch!.usageCount}, list_price_usd ${desearch!.listPriceUsd.toFixed(6)} (${desearch!.basis})`,
     );
   }
-  process.stdout.write(`${lines.join("\n")}\n`);
+
+  const chutesEstimate = chutesWorstCaseEstimateUsd({
+    question: input.question,
+    referenceDate: input.referenceDate,
+    handles: input.handles,
+    maxRetrievedPostsPerHandle: desearch
+      ? desearch.postsPerRequest * requestsPerHandle
+      : 55,
+    env: input.env,
+  });
+  lines.push(
+    `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} summed across handles`,
+  );
+  return lines;
+}
+
+export function printAnalyzePreflight(input: {
+  handles: readonly string[];
+  question: string;
+  referenceDate: string;
+  model: string;
+  replay: boolean;
+  offline: boolean;
+  env: NodeJS.ProcessEnv;
+}): void {
+  process.stdout.write(`${buildAnalyzePreflightLines(input).join("\n")}\n`);
 }

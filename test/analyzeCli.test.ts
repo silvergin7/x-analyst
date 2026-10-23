@@ -129,6 +129,57 @@ describe("npm run analyze", () => {
     assert.doesNotMatch(result.stdout, /Report JSON:/);
   });
 
+  it("blocks non-https non-loopback overrides before Proceed on non-tty without --yes", () => {
+    const envDir = mkdtempSync(path.join(tmpdir(), "analyze-https-block-"));
+    const envFile = path.join(envDir, ".env");
+    writeFileSync(
+      envFile,
+      [
+        "POSTS_PROVIDER=desearch",
+        "DESEARCH_LIVE_ENABLED=true",
+        "DESEARCH_API_KEY=unit-test-only-not-a-secret",
+        "DESEARCH_MAX_REQUESTS_PER_RUN=5",
+        "DESEARCH_MAX_REQUESTS_PER_HANDLE=3",
+        "ANALYSIS_PROVIDER=chutes",
+        "LLM_LIVE_ENABLED=true",
+        "CHUTES_API_KEY=unit-test-only-not-a-secret",
+        "DESEARCH_API_BASE=http://not-loopback.example",
+        "CHUTES_CHAT_COMPLETIONS_URL=http://127.0.0.1:9/v1/chat/completions",
+      ].join("\n"),
+      "utf8",
+    );
+    const result = spawnAnalyze(["--handles", "bullmacro", "--env-file", envFile]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr + result.stdout, /Preflight error: DESEARCH_API_BASE must use https/);
+    assert.doesNotMatch(result.stderr + result.stdout, /not-loopback\.example/);
+    assert.doesNotMatch(result.stdout, /Proceed\?/);
+    assert.doesNotMatch(result.stdout, /Report JSON:/);
+  });
+
+  it("shows override warnings with --yes before any request", { skip: !vendorReady }, () => {
+    const envDir = mkdtempSync(path.join(tmpdir(), "analyze-warn-yes-"));
+    const envFile = path.join(envDir, ".env");
+    writeFileSync(
+      envFile,
+      [
+        "POSTS_PROVIDER=desearch",
+        "DESEARCH_LIVE_ENABLED=true",
+        "DESEARCH_API_KEY=unit-test-only-not-a-secret",
+        "DESEARCH_MAX_REQUESTS_PER_RUN=5",
+        "DESEARCH_MAX_REQUESTS_PER_HANDLE=3",
+        "ANALYSIS_PROVIDER=chutes",
+        "LLM_LIVE_ENABLED=true",
+        "CHUTES_API_KEY=unit-test-only-not-a-secret",
+        ...UNREACHABLE_PROVIDER_ENDPOINTS,
+      ].join("\n"),
+      "utf8",
+    );
+    const result = spawnAnalyze(["--yes", "--handles", "bullmacro", "--env-file", envFile]);
+    assert.match(result.stdout, /Warning: DESEARCH_API_BASE is not the default/);
+    assert.match(result.stdout, /Warning: CHUTES_CHAT_COMPLETIONS_URL is not the default/);
+    assert.match(result.stdout, /Desearch host: http:\/\/127\.0\.0\.1:9/);
+  });
+
   it("rejects invalid or duplicate --handles before preflight", () => {
     const invalid = spawnAnalyze(
       ["--offline", "--yes", "--handles", "bullmacro,bad handle"],
