@@ -24,6 +24,7 @@ import {
 } from "../src/analyze/chutesClient.js";
 import { LlmCitationError, LlmOutlookAnalyzer, LlmOutputError } from "../src/analyze/llmOutlookAnalyzer.js";
 import {
+  DEFAULT_CHUTES_CHAT_COMPLETIONS_URL,
   LLM_CALL_BUDGET_USD,
   LLM_INPUT_MAX_CHARS,
   PRICED_LLM_MODEL,
@@ -70,6 +71,7 @@ function liveConfig(overrides: Partial<LlmRuntimeConfig> = {}): LlmRuntimeConfig
     liveEnabled: true,
     apiKey: "test-key",
     model: PRICED_LLM_MODEL,
+    chatCompletionsUrl: DEFAULT_CHUTES_CHAT_COMPLETIONS_URL,
     eligible: true,
     ...overrides,
   };
@@ -820,6 +822,9 @@ describe("LlmOutlookAnalyzer", () => {
 });
 
 describe("runLlmFixtureCheck", () => {
+  beforeEach(() => installByteQuarterMockTokenizer());
+  afterEach(() => clearMockTokenizer());
+
   it("does not call Chutes when the live gates are closed", async () => {
     const recorded = recordingTransport();
     let output = "";

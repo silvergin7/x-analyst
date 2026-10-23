@@ -1,5 +1,9 @@
 # Saved post slices
 data/slices/
+data/reports/
+
+.test-env.json
+.test-data-dir-snapshot.json
 
 vendor/
 

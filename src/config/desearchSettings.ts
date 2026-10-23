@@ -1,3 +1,5 @@
+import { DEFAULT_DESEARCH_API_BASE } from "../fetch/desearch/buildRequest.js";
+
 /** Placeholder values in .env.example — never treat as real credentials. */
 export const DESEARCH_PLACEHOLDER_KEY = "replace_me_only_when_you_are_ready";
 
@@ -24,6 +26,12 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
  * Caps HTTP calls to Desearch per fetch run (separate from post retention caps).
  * Not a dollar spending limit — each request may return an undocumented number of billable posts.
  */
+export function loadDesearchApiBase(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.DESEARCH_API_BASE?.trim();
+  if (raw === undefined || raw === "") return DEFAULT_DESEARCH_API_BASE;
+  return raw.replace(/\/+$/, "");
+}
+
 export function loadDesearchRequestBudget(
   env: NodeJS.ProcessEnv = process.env,
 ): number {
@@ -34,9 +42,88 @@ export function loadDesearchRequestBudget(
 }
 
 /**
- * Optional cap on Desearch HTTP requests for one handle.
- * Unset, empty, or malformed means no per-handle limit.
+ * Caps Desearch HTTP requests for one handle when set in env.
+ * `loadDesearchMaxRequestsPerHandle` treats unset, empty, or malformed as no cap for fetch runs.
+ * Live `npm run analyze` requires a positive integer via `readDesearchMaxRequestsPerHandleStrict`.
  */
+export type DesearchLimitField =
+  | "DESEARCH_MAX_REQUESTS_PER_RUN"
+  | "DESEARCH_MAX_REQUESTS_PER_HANDLE";
+
+export function readDesearchMaxRequestsPerRunStrict(
+  env: NodeJS.ProcessEnv,
+): { ok: true; value: number } | { ok: false; field: DesearchLimitField; message: string } {
+  const raw = env.DESEARCH_MAX_REQUESTS_PER_RUN;
+  if (raw === undefined) {
+    return {
+      ok: false,
+      field: "DESEARCH_MAX_REQUESTS_PER_RUN",
+      message: "DESEARCH_MAX_REQUESTS_PER_RUN is unset",
+    };
+  }
+  const trimmed = raw.trim();
+  if (trimmed === "" || !/^\d+$/.test(trimmed)) {
+    return {
+      ok: false,
+      field: "DESEARCH_MAX_REQUESTS_PER_RUN",
+      message: "DESEARCH_MAX_REQUESTS_PER_RUN is malformed",
+    };
+  }
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    return {
+      ok: false,
+      field: "DESEARCH_MAX_REQUESTS_PER_RUN",
+      message: "DESEARCH_MAX_REQUESTS_PER_RUN is malformed",
+    };
+  }
+  return { ok: true, value: n };
+}
+
+export function readDesearchMaxRequestsPerHandleStrict(
+  env: NodeJS.ProcessEnv,
+):
+  | { ok: true; value: number }
+  | { ok: false; field: DesearchLimitField; message: string } {
+  const raw = env.DESEARCH_MAX_REQUESTS_PER_HANDLE;
+  if (raw === undefined) {
+    return {
+      ok: false,
+      field: "DESEARCH_MAX_REQUESTS_PER_HANDLE",
+      message: "DESEARCH_MAX_REQUESTS_PER_HANDLE is unset",
+    };
+  }
+  const trimmed = raw.trim();
+  if (trimmed === "" || !/^\d+$/.test(trimmed)) {
+    return {
+      ok: false,
+      field: "DESEARCH_MAX_REQUESTS_PER_HANDLE",
+      message: "DESEARCH_MAX_REQUESTS_PER_HANDLE is malformed",
+    };
+  }
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    return {
+      ok: false,
+      field: "DESEARCH_MAX_REQUESTS_PER_HANDLE",
+      message: "DESEARCH_MAX_REQUESTS_PER_HANDLE is malformed",
+    };
+  }
+  return { ok: true, value: n };
+}
+
+export function validateLiveDesearchRequestLimits(
+  env: NodeJS.ProcessEnv,
+): { ok: true } | { ok: false; errors: { field: DesearchLimitField; message: string }[] } {
+  const errors: { field: DesearchLimitField; message: string }[] = [];
+  const run = readDesearchMaxRequestsPerRunStrict(env);
+  if (!run.ok) errors.push({ field: run.field, message: run.message });
+  const perHandle = readDesearchMaxRequestsPerHandleStrict(env);
+  if (!perHandle.ok) errors.push({ field: perHandle.field, message: perHandle.message });
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true };
+}
+
 export function loadDesearchMaxRequestsPerHandle(
   env: NodeJS.ProcessEnv = process.env,
 ): number | undefined {

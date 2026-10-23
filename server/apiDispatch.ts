@@ -214,15 +214,25 @@ export async function handleApiRequest(
   sendJson(res, 404, { error: "Not found" });
 }
 
-/** Test helper: dispatch without binding a port or external network. */
-const isolatedMockEnv: NodeJS.ProcessEnv = {
-  POSTS_PROVIDER: "mock",
-  ANALYSIS_PROVIDER: "mock",
-  LLM_LIVE_ENABLED: "false",
-  DESEARCH_LIVE_ENABLED: "false",
-  CHUTES_API_KEY: "",
-  DESEARCH_API_KEY: "",
-};
+function isolatedMockEnvForTests(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    POSTS_PROVIDER: "mock",
+    ANALYSIS_PROVIDER: "mock",
+    LLM_LIVE_ENABLED: "false",
+    DESEARCH_LIVE_ENABLED: "false",
+    CHUTES_API_KEY: "",
+    DESEARCH_API_KEY: "",
+  };
+  const sliceDir = process.env.X_ANALYST_SLICE_DIR?.trim();
+  if (sliceDir !== undefined && sliceDir !== "") {
+    env.X_ANALYST_SLICE_DIR = sliceDir;
+  }
+  const reportsDir = process.env.X_ANALYST_REPORTS_DIR?.trim();
+  if (reportsDir !== undefined && reportsDir !== "") {
+    env.X_ANALYST_REPORTS_DIR = reportsDir;
+  }
+  return env;
+}
 
 export async function dispatchApiForTest(input: {
   method: string;
@@ -269,7 +279,7 @@ export async function dispatchApiForTest(input: {
   });
 
   await handleApiRequest(mockReq, mockRes, {
-    env: input.env ?? isolatedMockEnv,
+    env: input.env ?? isolatedMockEnvForTests(),
     cache: input.cache ?? createFetchSliceCache(),
     desearchTransport: input.desearchTransport,
     chutesTransport: input.chutesTransport,

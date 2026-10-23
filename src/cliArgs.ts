@@ -1,6 +1,7 @@
 import { DEFAULT_HANDLES, DEFAULT_QUESTION } from "./config.js";
 import { parseAnalysisReferenceDate } from "./config/llmSettings.js";
 import { parseHandleList } from "./validation/handles.js";
+import { parseHandleListStrict } from "./validation/handlesStrict.js";
 
 export interface CliOptions {
   handles: string[];
@@ -12,6 +13,12 @@ export interface CliOptions {
   fresh: boolean;
   /** Slice file to analyze instead of fetching. */
   replayPath?: string;
+  offline: boolean;
+  yes: boolean;
+  outputPath?: string;
+  envFilePath?: string;
+  handlesFlagSeen: boolean;
+  questionFlagSeen: boolean;
   /** Flags passed without a required value (e.g. `--handles` at end of argv). */
   flagErrors: string[];
 }
@@ -50,13 +57,27 @@ function readQuestionText(
   return { text: words.join(" "), next: i };
 }
 
+export interface ParseCliArgsOptions {
+  /** When false, omit fixture defaults so the caller can load the analyst list. */
+  useFixtureHandleDefaults?: boolean;
+  strictHandles?: boolean;
+}
+
 /** Minimal flag parser: --handles a,b --question "..." */
-export function parseCliArgs(argv: string[]): CliOptions {
+export function parseCliArgs(
+  argv: string[],
+  options: ParseCliArgsOptions = {},
+): CliOptions {
+  const useFixtureHandleDefaults = options.useFixtureHandleDefaults ?? true;
   let handlesRaw: string | undefined;
   let question: string | undefined;
   let asOf: string | undefined;
   let fresh = false;
   let replayPath: string | undefined;
+  let offline = false;
+  let yes = false;
+  let outputPath: string | undefined;
+  let envFilePath: string | undefined;
   let handlesFlagSeen = false;
   let questionFlagSeen = false;
   const flagErrors: string[] = [];
@@ -112,6 +133,42 @@ export function parseCliArgs(argv: string[]): CliOptions {
       fresh = true;
       continue;
     }
+    if (arg === "--offline") {
+      offline = true;
+      continue;
+    }
+    if (arg === "--env-file" || arg.startsWith("--env-file=")) {
+      const value =
+        arg === "--env-file"
+          ? nextArgLooksLikeValue(argv, i)
+            ? argv[++i]!
+            : ""
+          : arg.slice("--env-file=".length);
+      if (value === "") {
+        flagErrors.push("Missing value for --env-file (expected a file path)");
+      } else {
+        envFilePath = value;
+      }
+      continue;
+    }
+    if (arg === "--yes") {
+      yes = true;
+      continue;
+    }
+    if (arg === "--output" || arg.startsWith("--output=")) {
+      const value =
+        arg === "--output"
+          ? nextArgLooksLikeValue(argv, i)
+            ? argv[++i]!
+            : ""
+          : arg.slice("--output=".length);
+      if (value === "") {
+        flagErrors.push("Missing value for --output (expected a file path)");
+      } else {
+        outputPath = value;
+      }
+      continue;
+    }
     if (arg === "--replay" || arg.startsWith("--replay=")) {
       const value =
         arg === "--replay"
@@ -143,12 +200,17 @@ export function parseCliArgs(argv: string[]): CliOptions {
     }
   }
 
-  const useDefaultHandles = !handlesFlagSeen && flagErrors.length === 0;
+  const useDefaultHandles =
+    useFixtureHandleDefaults && !handlesFlagSeen && flagErrors.length === 0;
   const handleInput = useDefaultHandles
     ? DEFAULT_HANDLES.join(",")
-    : (handlesRaw ?? "");
+    : handlesFlagSeen
+      ? (handlesRaw ?? "")
+      : "";
 
-  const parsed = parseHandleList(handleInput);
+  const parsed = options.strictHandles
+    ? parseHandleListStrict(handleInput)
+    : parseHandleList(handleInput);
 
   const useDefaultQuestion = !questionFlagSeen && flagErrors.length === 0;
 
@@ -159,6 +221,12 @@ export function parseCliArgs(argv: string[]): CliOptions {
     asOf,
     fresh,
     replayPath,
+    offline,
+    yes,
+    outputPath,
+    envFilePath,
+    handlesFlagSeen,
+    questionFlagSeen,
     flagErrors,
   };
 }

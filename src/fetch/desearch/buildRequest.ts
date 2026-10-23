@@ -1,5 +1,8 @@
 /** Documented Desearch API base URL. */
-export const DESEARCH_API_BASE = "https://api.desearch.ai";
+export const DEFAULT_DESEARCH_API_BASE = "https://api.desearch.ai";
+
+/** @deprecated Use DEFAULT_DESEARCH_API_BASE or loadDesearchApiBase. */
+export const DESEARCH_API_BASE = DEFAULT_DESEARCH_API_BASE;
 
 export const TWITTER_USER_POSTS_PATH = "/twitter/user/posts";
 
@@ -17,8 +20,10 @@ export function buildTwitterUserPostsRequest(
   username: string,
   apiKey: string,
   cursor?: string,
+  apiBase: string = DEFAULT_DESEARCH_API_BASE,
 ): DesearchPostsRequest {
-  const url = new URL(`${DESEARCH_API_BASE}${TWITTER_USER_POSTS_PATH}`);
+  const base = apiBase.replace(/\/+$/, "");
+  const url = new URL(`${base}${TWITTER_USER_POSTS_PATH}`);
   url.searchParams.set("username", username);
   if (cursor) {
     url.searchParams.set("cursor", cursor);

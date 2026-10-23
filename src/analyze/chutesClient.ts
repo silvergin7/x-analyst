@@ -1,5 +1,4 @@
 import {
-  CHUTES_CHAT_COMPLETIONS_URL,
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
   LLM_CONTEXT_WINDOW_TOKENS,
@@ -211,7 +210,7 @@ export async function requestChutesCompletion(
   const signal = AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS);
   let response: ChutesTransportResponse;
   try {
-    response = await transport.post(CHUTES_CHAT_COMPLETIONS_URL, {
+    response = await transport.post(config.chatCompletionsUrl, {
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",

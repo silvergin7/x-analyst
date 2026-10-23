@@ -43,6 +43,16 @@ Input tokens use the official `chat_template` from `tokenizer_config.json` (rend
 
 Live `npm run analyze` reads [`config/analysts.json`](config/analysts.json) when `--handles` is omitted. Override the path with `ANALYST_LIST_PATH`. `--handles` overrides the file with the same validation rules (including duplicate rejection).
 
+## Live analyze
+
+Copy `.env.example` to `.env`, install the pinned Qwen tokenizer under `vendor/qwen3-32b-fp8/`, then run:
+
+```bash
+npm run analyze
+```
+
+The command loads `.env` without printing it. Shell variables already set override values from the file. Live runs stop when `.env` is missing or the provider gates are incomplete. `--offline` forces mock posts and mock analysis for tests. `--yes` skips the confirmation prompt (for approved live runs and offline tests). `npm start` requires `--offline` and stays on fixture data.
+
 ## CLI
 
 Default handles (`bullmacro`, `bearmacro`, `unclearmacro`) and default question:

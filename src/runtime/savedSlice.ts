@@ -13,6 +13,16 @@ import type {
 export const SAVED_SLICE_VERSION = 1;
 export const DEFAULT_SLICE_DIRECTORY = path.join("data", "slices");
 
+export function resolveSliceDirectory(
+  env: NodeJS.ProcessEnv,
+  override?: string,
+): string {
+  if (override !== undefined && override.trim() !== "") return override;
+  const fromEnv = env.X_ANALYST_SLICE_DIR?.trim();
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  return DEFAULT_SLICE_DIRECTORY;
+}
+
 const POST_KINDS = new Set<PostKind>(["original", "repost", "quote"]);
 const INCOMPLETE_REASONS = new Set<FetchIncompleteReason>([
   "total_post_limit_reached",
@@ -78,7 +88,18 @@ export function outcomesForSlice(outcomes: readonly FetchOutcome[]): FetchOutcom
 }
 
 /** Write one slice file. Returns the file path. */
+function assertNotDefaultSliceDirInTests(directory: string): void {
+  const testOverride = process.env.X_ANALYST_SLICE_DIR?.trim();
+  if (testOverride === undefined || testOverride === "") return;
+  if (path.resolve(directory) === path.resolve(DEFAULT_SLICE_DIRECTORY)) {
+    throw new SavedSliceError(
+      "Refusing to write to data/slices while X_ANALYST_SLICE_DIR is set (test isolation)",
+    );
+  }
+}
+
 export function saveSlice(directory: string, slice: SavedSliceFile): string {
+  assertNotDefaultSliceDirInTests(directory);
   if (slice.version !== SAVED_SLICE_VERSION) {
     throw new SavedSliceError("Saved slice version is not supported");
   }

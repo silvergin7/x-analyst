@@ -8,6 +8,14 @@ import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 async function main(): Promise<void> {
   const options = parseCliArgs(process.argv.slice(2));
 
+  if (!options.offline) {
+    process.stderr.write(
+      "npm start requires --offline for fixture runs. Use npm run analyze for live Desearch and Chutes.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   if (options.flagErrors.length > 0) {
     for (const err of options.flagErrors) {
       process.stderr.write(`Input error: ${err}\n`);
@@ -29,6 +37,15 @@ async function main(): Promise<void> {
         referenceDate,
         fresh: options.fresh,
         replayPath: options.replayPath,
+        env: {
+          ...process.env,
+          POSTS_PROVIDER: "mock",
+          ANALYSIS_PROVIDER: "mock",
+          LLM_LIVE_ENABLED: "false",
+          DESEARCH_LIVE_ENABLED: "false",
+          CHUTES_API_KEY: "",
+          DESEARCH_API_KEY: "",
+        },
         onEstimate: (estimate) => {
           process.stdout.write(`${formatBudgetEstimate(estimate)}\n`);
         },

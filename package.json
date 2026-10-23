@@ -6,14 +6,15 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/cli.ts",
+    "analyze": "tsx src/analyzeCli.ts",
     "analyze:llm-fixture": "tsx src/llmFixtureCheck.ts",
     "dev:server": "tsx server/main.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "test": "node --import tsx --test test/*.test.ts test/desearch/*.test.ts test/format/*.test.ts test/server/*.test.ts && vitest run --config web/vitest.config.ts",
+    "test": "node --import tsx test/dataDirSnapshotStart.ts && node --import tsx --import ./test/testEnvBootstrap.ts --test test/*.test.ts test/desearch/*.test.ts test/format/*.test.ts test/server/*.test.ts && node --import tsx test/dataDirSnapshotEnd.ts && vitest run --config web/vitest.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "devDependencies": {
     "@testing-library/dom": "10.4.2",

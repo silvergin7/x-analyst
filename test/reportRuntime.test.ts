@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
 import type { ChutesTransport } from "../src/analyze/chutesClient.js";
 import type { DesearchTransport } from "../src/fetch/desearch/desearchTransport.js";
 import { formatFullReport } from "../src/format/report.js";
@@ -12,6 +13,7 @@ import { classifiedOutlook } from "./classifiedOutlook.js";
 
 const question = { text: "What is each analyst's current market outlook?" };
 const MODEL = "Qwen/Qwen3-32B-TEE";
+const testSliceDir = mkdtempSync(path.join(tmpdir(), "x-analyst-slices-"));
 
 function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -25,8 +27,20 @@ function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     LLM_LIVE_ENABLED: "true",
     CHUTES_API_KEY: "unit-test-only-not-a-secret",
     LLM_MODEL: MODEL,
+    X_ANALYST_SLICE_DIR: testSliceDir,
     ...extra,
   };
+}
+
+function mockRunEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    X_ANALYST_SLICE_DIR: testSliceDir,
+    ...extra,
+  };
+}
+
+function withSliceDir(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, X_ANALYST_SLICE_DIR: testSliceDir };
 }
 
 function tweet(id: string, quote: boolean, username = "bullmacro") {
@@ -132,6 +146,34 @@ function classified(
 }
 
 describe("runReport live gates", () => {
+  beforeEach(() => installByteQuarterMockTokenizer());
+  afterEach(() => clearMockTokenizer());
+
+  it("uses only the explicit env object, not shell variables", async () => {
+    const posts = desearchTransport([tweet("live-1", false)]);
+    const previousPosts = process.env.POSTS_PROVIDER;
+    const previousDesearch = process.env.DESEARCH_LIVE_ENABLED;
+    process.env.POSTS_PROVIDER = "desearch";
+    process.env.DESEARCH_LIVE_ENABLED = "true";
+    process.env.DESEARCH_API_KEY = "shell-key-should-not-run";
+    try {
+      const result = await runReport(["bullmacro"], question, {
+        referenceDate: "2026-11-02",
+        env: mockRunEnv(),
+        cache: createFetchSliceCache(),
+        desearchTransport: posts.transport,
+      });
+      assert.equal(posts.calls.length, 0);
+      assert.equal(result.postsSource, "fixtures");
+    } finally {
+      if (previousPosts === undefined) delete process.env.POSTS_PROVIDER;
+      else process.env.POSTS_PROVIDER = previousPosts;
+      if (previousDesearch === undefined) delete process.env.DESEARCH_LIVE_ENABLED;
+      else process.env.DESEARCH_LIVE_ENABLED = previousDesearch;
+      delete process.env.DESEARCH_API_KEY;
+    }
+  });
+
   it("stays on fixtures and mock rules when providers are unset", async () => {
     const posts = desearchTransport([tweet("live-1", false)]);
     const model = chutesTransport({
@@ -141,7 +183,7 @@ describe("runReport live gates", () => {
     });
     const result = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: {},
+      env: mockRunEnv(),
       cache: createFetchSliceCache(),
       desearchTransport: posts.transport,
       chutesTransport: model.transport,
@@ -172,7 +214,7 @@ describe("runReport live gates", () => {
       () =>
         runReport(["bullmacro"], question, {
           ...options,
-          env: { POSTS_PROVIDER: "desearch", ANALYSIS_PROVIDER: "mock" },
+          env: withSliceDir({ POSTS_PROVIDER: "desearch", ANALYSIS_PROVIDER: "mock" }),
         }),
       (err: unknown) => err instanceof ReportConfigError && /No request was sent/.test(err.message),
     );
@@ -180,13 +222,13 @@ describe("runReport live gates", () => {
       () =>
         runReport(["bullmacro"], question, {
           ...options,
-          env: {
+          env: withSliceDir({
             POSTS_PROVIDER: "desearch",
             DESEARCH_LIVE_ENABLED: "true",
             DESEARCH_API_KEY: "unit-test-only-not-a-secret",
             ANALYSIS_PROVIDER: "chutes",
             LLM_LIVE_ENABLED: "true",
-          },
+          }),
         }),
       /No request was sent/,
     );
@@ -529,12 +571,12 @@ describe("runReport live gates", () => {
     ));
     await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: {
+      env: withSliceDir({
         ANALYSIS_PROVIDER: "chutes",
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "unit-test-only-not-a-secret",
         LLM_MODEL: MODEL,
-      },
+      }),
       cache: createFetchSliceCache(),
       desearchTransport: posts.transport,
       chutesTransport: model.transport,
@@ -759,14 +801,14 @@ describe("runReport live gates", () => {
     const commit = "a".repeat(40);
     const saved = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: {
+      env: withSliceDir({
         POSTS_PROVIDER: "mock",
         ANALYSIS_PROVIDER: "mock",
         DESEARCH_LIVE_ENABLED: "false",
         LLM_LIVE_ENABLED: "false",
         CHUTES_API_KEY: "",
         DESEARCH_API_KEY: "",
-      },
+      }),
       cache: createFetchSliceCache(),
       sliceDirectory: dir,
       readCommit: () => commit,
@@ -784,14 +826,14 @@ describe("runReport live gates", () => {
     const replayed = await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
       replayPath: path.join(dir, files[0]!),
-      env: {
+      env: withSliceDir({
         POSTS_PROVIDER: "desearch",
         DESEARCH_LIVE_ENABLED: "true",
         DESEARCH_API_KEY: "unit-test-only-not-a-secret",
         ANALYSIS_PROVIDER: "mock",
         LLM_LIVE_ENABLED: "false",
         CHUTES_API_KEY: "",
-      },
+      }),
       cache: createFetchSliceCache(),
       sliceDirectory: dir,
       desearchTransport: transport,
@@ -821,7 +863,7 @@ describe("runReport live gates", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
     await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: { POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" },
+      env: withSliceDir({ POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" }),
       cache: createFetchSliceCache(),
       sliceDirectory: dir,
       readCommit: () => "e".repeat(40),
@@ -856,7 +898,7 @@ describe("runReport live gates", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
     await runReport(["bullmacro"], question, {
       referenceDate: "2026-11-02",
-      env: { POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" },
+      env: withSliceDir({ POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" }),
       cache: createFetchSliceCache(),
       sliceDirectory: dir,
       readCommit: () => "b".repeat(40),

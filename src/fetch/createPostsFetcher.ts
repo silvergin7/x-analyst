@@ -1,5 +1,6 @@
 import { cliPostsProvider, loadPostsProviderConfig } from "../config/postsProvider.js";
 import {
+  loadDesearchApiBase,
   loadDesearchMaxRequestsPerHandle,
   loadDesearchRequestBudget,
   loadDesearchSettings,
@@ -43,6 +44,7 @@ function createEligibleDesearchFetcher(
     credential: resolveDesearchApiKey(env),
     maxRequestsPerRun: loadDesearchRequestBudget(env),
     maxRequestsPerHandle: loadDesearchMaxRequestsPerHandle(env),
+    apiBase: loadDesearchApiBase(env),
   });
 }
 
