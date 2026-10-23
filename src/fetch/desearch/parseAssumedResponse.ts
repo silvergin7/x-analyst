@@ -8,6 +8,8 @@ export type ParseResult =
       /** True when response includes a non-empty next_cursor (more pages may exist). */
       hasMorePages: boolean;
       nextCursor: string | undefined;
+      /** Identical ids dropped inside this page. A different copy fails the response. */
+      duplicatesRemoved: number;
     }
   | { ok: false; reason: string };
 
@@ -173,23 +175,44 @@ export function parseTwitterUserPostsResponse(
   const { hasMorePages, nextCursor } = cursorResult;
 
   if (payload.tweets.length === 0) {
-    return { ok: true, posts: [], hasMorePages, nextCursor };
+    return { ok: true, posts: [], hasMorePages, nextCursor, duplicatesRemoved: 0 };
   }
 
   const posts: Post[] = [];
-  const seenIds = new Set<string>();
+  const seen = new Map<string, Post>();
+  let duplicatesRemoved = 0;
 
   for (let i = 0; i < payload.tweets.length; i++) {
     const mapped = mapTweet(expectedUsername, payload.tweets[i], i);
     if (!mapped.ok) return mapped;
-    if (seenIds.has(mapped.post.id)) {
-      return { ok: false, reason: `duplicate post id ${mapped.post.id}` };
+    const prior = seen.get(mapped.post.id);
+    if (prior) {
+      if (!samePageCopy(prior, mapped.post)) {
+        return {
+          ok: false,
+          reason: `duplicate post id ${mapped.post.id} has different content`,
+        };
+      }
+      duplicatesRemoved += 1;
+      continue;
     }
-    seenIds.add(mapped.post.id);
+    seen.set(mapped.post.id, mapped.post);
     posts.push(mapped.post);
   }
 
-  return { ok: true, posts, hasMorePages, nextCursor };
+  return { ok: true, posts, hasMorePages, nextCursor, duplicatesRemoved };
+}
+
+function samePageCopy(a: Post, b: Post): boolean {
+  return (
+    a.text === b.text &&
+    a.timestamp === b.timestamp &&
+    a.url === b.url &&
+    a.kind === b.kind &&
+    a.typeConflict === b.typeConflict &&
+    a.quotedPostText === b.quotedPostText &&
+    a.hasAttachedMedia === b.hasAttachedMedia
+  );
 }
 
 /** @deprecated Use parseTwitterUserPostsResponse. */

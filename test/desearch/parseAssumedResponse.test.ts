@@ -285,11 +285,21 @@ describe("parseTwitterUserPostsResponse", () => {
       }).ok,
       false,
     );
-    assert.equal(
-      parseTwitterUserPostsResponse("bullmacro", {
-        tweets: [validTweet({ id: "dup" }), validTweet({ id: "dup" })],
-      }).ok,
-      false,
-    );
+    const identical = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet({ id: "dup" }), validTweet({ id: "dup" })],
+    });
+    assert.equal(identical.ok, true);
+    if (identical.ok) {
+      assert.equal(identical.duplicatesRemoved, 1);
+      assert.equal(identical.posts.length, 1);
+      assert.equal(identical.posts[0]?.id, "dup");
+    }
+    const different = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet({ id: "dup" }), validTweet({ id: "dup", text: "A different sentence." })],
+    });
+    assert.equal(different.ok, false);
+    if (!different.ok) {
+      assert.equal(different.reason, "duplicate post id dup has different content");
+    }
   });
 });

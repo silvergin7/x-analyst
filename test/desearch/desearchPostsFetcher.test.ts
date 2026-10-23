@@ -27,6 +27,58 @@ function tweetsBody(tweets: unknown[], next_cursor?: string) {
 }
 
 describe("DesearchPostsFetcher", () => {
+  it("counts an identical duplicate inside one page and rejects different content", async () => {
+    const id = "2104906619062538582";
+    const same = validApiTweet(id, "bullmacro", "Fri Oct 09 12:12:07 +0000 2026");
+    const transport: DesearchTransport = {
+      async execute() {
+        return { status: 200, body: tweetsBody([same, { ...same }]) };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 1,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].duplicatePostsRemoved, 1);
+      assert.equal(outcomes[0].posts.length, 1);
+    }
+
+    const conflicting: DesearchTransport = {
+      async execute() {
+        return {
+          status: 200,
+          body: tweetsBody([same, { ...same, text: "Different wording." }]),
+        };
+      },
+    };
+    const failing = new DesearchPostsFetcher({
+      transport: conflicting,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 1,
+    });
+    await assert.rejects(
+      () =>
+        failing.fetchForHandles(
+          ["bullmacro"],
+          { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+          { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+        ),
+      /duplicate post id 2104906619062538582 has different content/,
+    );
+  });
+
   it("removes a post id repeated on a later page", async () => {
     const id = "2104906619062538582";
     let call = 0;

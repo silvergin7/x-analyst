@@ -68,6 +68,7 @@ export async function fetchHandlePages(
   let requestsUsed = 0;
   const billing: DesearchBilling[] = [];
   const seenCursors = new Set<string>();
+  let withinPageDuplicates = 0;
 
   const moveCursor = (nextCursor: string): string => {
     try {
@@ -123,6 +124,7 @@ export async function fetchHandlePages(
     }
 
     lastResponseHasMorePages = parsed.hasMorePages;
+    withinPageDuplicates += parsed.duplicatesRemoved;
     collected.push(...parsed.posts);
 
     const oldest = oldestParsedMs(parsed.posts);
@@ -147,6 +149,6 @@ export async function fetchHandlePages(
     apiHasMorePages: lastResponseHasMorePages && stopReason !== "no_more_pages",
     requestsUsed,
     billing,
-    duplicatesRemoved: deduped.duplicatesRemoved,
+    duplicatesRemoved: deduped.duplicatesRemoved + withinPageDuplicates,
   };
 }
