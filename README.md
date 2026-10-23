@@ -76,6 +76,8 @@ Example excerpt (trimmed):
 4. Read the preflight summary: it lists handles, limits, provider hosts (scheme, host, and port only), and worst-case local cost estimates (not provider charges).
 5. Type `y` at `Proceed? [y/N]` to send paid requests, or anything else to stop with no fetch and no model call.
 
+To re-analyze a saved slice with `--replay path`, you only need Chutes live settings in `.env` (`ANALYSIS_PROVIDER`, `LLM_LIVE_ENABLED`, `CHUTES_API_KEY`). A fresh live fetch still needs the full Desearch and Chutes gates from the table above. Details: [docs/reference.md](docs/reference.md).
+
 ## View a report
 
 1. In one terminal, run `npm run dev:server` (API on `http://127.0.0.1:3001`).

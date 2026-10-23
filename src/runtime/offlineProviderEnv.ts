@@ -10,7 +10,7 @@ export function offlineProviderEnv(base: NodeJS.ProcessEnv = process.env): NodeJ
   };
 }
 
-export function liveProviderEnvLooksDisabled(env: NodeJS.ProcessEnv): boolean {
+export function liveFetchEnvLooksDisabled(env: NodeJS.ProcessEnv): boolean {
   const posts = env.POSTS_PROVIDER?.trim().toLowerCase();
   const analysis = env.ANALYSIS_PROVIDER?.trim().toLowerCase();
   const desearchOff = env.DESEARCH_LIVE_ENABLED !== "true";

@@ -12,11 +12,15 @@ Parsed in `src/cliArgs.ts` (analyze entry uses strict handle parsing and does no
 | `--question "..."` | Question text; default `What is each analyst's current market outlook?` when omitted. |
 | `--as-of YYYY-MM-DD` | Analysis reference date (UTC calendar day). |
 | `--fresh` | Skip the in-memory fetch cache and call Desearch again. Each `npm run analyze` starts a new process with an empty cache, so the first fetch in that run is the same with or without `--fresh`. The flag matters when the same Node process runs more than one fetch with the same cache key (see tests). |
-| `--replay path` | Analyze a saved slice file without calling Desearch. |
+| `--replay path` | Analyze a saved slice file without calling Desearch. Requires only Chutes live settings in `.env` (not Desearch). |
 | `--output path` | JSON report path; default under `data/reports/` (or `X_ANALYST_REPORTS_DIR`). |
 | `--env-file path` | Env file to load for live runs (default `.env` in the repo root). |
 
 Live runs load `.env` in code. Shell variables already set override values from the file.
+
+**Fresh live fetch** (no `--replay`) needs Desearch and Chutes gates: `POSTS_PROVIDER=desearch`, `DESEARCH_LIVE_ENABLED=true`, `DESEARCH_API_KEY`, request limits, `ANALYSIS_PROVIDER=chutes`, `LLM_LIVE_ENABLED=true`, and `CHUTES_API_KEY`.
+
+**Replay** (`--replay path`, without `--offline`) needs only **`ANALYSIS_PROVIDER=chutes`**, **`LLM_LIVE_ENABLED=true`**, and a non-empty **`CHUTES_API_KEY`**. Desearch variables are not required at the CLI gate; before analysis the run clears `DESEARCH_API_KEY` and sets `DESEARCH_LIVE_ENABLED=false` in the process env passed to `runReport`.
 
 ## `npm start`
 

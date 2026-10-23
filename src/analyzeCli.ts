@@ -14,7 +14,8 @@ import { formatFetchIssue, formatFullReport, formatReportFailure } from "./forma
 import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 import { confirmProceed } from "./runtime/confirmationGate.js";
 import { EnvFileError, loadEnvFileIntoProcess } from "./runtime/loadEnvFile.js";
-import { liveProviderEnvLooksDisabled, offlineProviderEnv } from "./runtime/offlineProviderEnv.js";
+import { liveFetchEnvLooksDisabled, offlineProviderEnv } from "./runtime/offlineProviderEnv.js";
+import { chutesLiveEnvLooksDisabled, stripDesearchForReplayRun } from "./runtime/replayRunEnv.js";
 import { validateProviderOverrides } from "./runtime/providerUrlPreflight.js";
 
 const ENV_FILE = ".env";
@@ -65,7 +66,16 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    if (liveProviderEnvLooksDisabled(runEnv)) {
+    const replayRun = options.replayPath !== undefined;
+    if (replayRun) {
+      if (chutesLiveEnvLooksDisabled(runEnv)) {
+        process.stderr.write(
+          "Replay requires Chutes live settings in .env: ANALYSIS_PROVIDER=chutes, LLM_LIVE_ENABLED=true, and CHUTES_API_KEY.\n",
+        );
+        process.exitCode = 1;
+        return;
+      }
+    } else if (liveFetchEnvLooksDisabled(runEnv)) {
       process.stderr.write(
         "Live providers are not fully enabled in .env. Use --offline for mock runs or complete the Desearch and Chutes gates.\n",
       );
@@ -144,6 +154,10 @@ async function main(): Promise<void> {
     process.stderr.write("Stopped before any request.\n");
     process.exitCode = 1;
     return;
+  }
+
+  if (options.replayPath !== undefined && !options.offline) {
+    runEnv = stripDesearchForReplayRun(runEnv);
   }
 
   try {
