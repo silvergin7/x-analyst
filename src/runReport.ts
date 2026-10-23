@@ -183,6 +183,17 @@ export async function runReport(
   if (llm.provider !== "" && llm.provider !== "mock" && llm.provider !== "chutes") {
     problems.push(`ANALYSIS_PROVIDER ${llm.provider} is not supported.`);
   }
+  const maxRequestsPerHandle = loadDesearchMaxRequestsPerHandle(env);
+  if (
+    !options.replayPath &&
+    postsSelected === "desearch" &&
+    desearchSettings.liveEligible &&
+    maxRequestsPerHandle === undefined
+  ) {
+    problems.push(
+      "DESEARCH_MAX_REQUESTS_PER_HANDLE must be a positive integer before a live Desearch fetch.",
+    );
+  }
   if (problems.length > 0) {
     throw new ReportConfigError(`${problems.join(" ")} No request was sent.`);
   }
@@ -204,7 +215,6 @@ export async function runReport(
   const cutoffMs = lookbackCutoffMs(referenceDate, lookbackDays);
   const inputMaxChars = loadInputMaxChars(env);
   const maxRequestsPerRun = loadDesearchRequestBudget(env);
-  const maxRequestsPerHandle = loadDesearchMaxRequestsPerHandle(env);
   const cache = options.cache ?? sharedFetchSliceCache;
   const key = fetchCacheKey({
     postsSource,

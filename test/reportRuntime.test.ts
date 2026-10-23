@@ -19,6 +19,7 @@ function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     DESEARCH_LIVE_ENABLED: "true",
     DESEARCH_API_KEY: "unit-test-only-not-a-secret",
     DESEARCH_MAX_REQUESTS_PER_RUN: "1",
+    DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
     LOOKBACK_DAYS: "400",
     ANALYSIS_PROVIDER: "chutes",
     LLM_LIVE_ENABLED: "true",
@@ -208,6 +209,30 @@ describe("runReport live gates", () => {
     );
     assert.equal(posts.calls.length, 0);
     assert.equal(model.calls.length, 0);
+  });
+
+  it("stops a live Desearch fetch when the per-handle limit is missing", async () => {
+    for (const value of [undefined, "", "nope", "0"] as const) {
+      const posts = desearchTransport([tweet("live-1", false)]);
+      const env = desearchEnv();
+      if (value === undefined) delete env.DESEARCH_MAX_REQUESTS_PER_HANDLE;
+      else env.DESEARCH_MAX_REQUESTS_PER_HANDLE = value;
+      await assert.rejects(
+        () =>
+          runReport(["bullmacro"], question, {
+            referenceDate: "2026-11-02",
+            env,
+            cache: createFetchSliceCache(),
+            desearchTransport: posts.transport,
+            chutesTransport: chutesTransport(classified("bullish", "unused", ["p1"])).transport,
+          }),
+        (err: unknown) =>
+          err instanceof ReportConfigError &&
+          /DESEARCH_MAX_REQUESTS_PER_HANDLE must be a positive integer/.test(err.message) &&
+          /No request was sent/.test(err.message),
+      );
+      assert.equal(posts.calls.length, 0);
+    }
   });
 
   it("sends retrieved posts to Chutes with the invocation date and no fixture wording", async () => {

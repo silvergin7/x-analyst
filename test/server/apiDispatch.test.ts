@@ -158,6 +158,7 @@ describe("live gates stay closed until a request is allowed", () => {
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "unit-test-only-not-a-secret",
         LLM_MODEL: "Qwen/Qwen3-32B-TEE",
+        DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
       },
       desearchTransport: {
         async execute() {
@@ -194,6 +195,7 @@ describe("live gates stay closed until a request is allowed", () => {
         DESEARCH_LIVE_ENABLED: "true",
         DESEARCH_API_KEY: "unit-test-only-not-a-secret",
         DESEARCH_MAX_REQUESTS_PER_RUN: "1",
+        DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
         ANALYSIS_PROVIDER: "chutes",
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "unit-test-only-not-a-secret",
