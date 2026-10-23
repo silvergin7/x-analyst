@@ -1,9 +1,3 @@
-# Cursor local rules and settings (not for version control)
-.cursor/
-
-# Temporary external review artifact (never commit)
-REVIEW_FOR_AUDIT.md
-
 # Secrets and local env
 .env
 .env.*
