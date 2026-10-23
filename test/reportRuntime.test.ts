@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import type { ChutesTransport } from "../src/analyze/chutesClient.js";
 import type { DesearchTransport } from "../src/fetch/desearch/desearchTransport.js";
@@ -679,6 +682,154 @@ describe("runReport live gates", () => {
         err.details.billing[0]?.usageCount === 6 &&
         err.details.billing[0]?.costUsd === 0.15 &&
         err.details.sliceStored === false,
+    );
+  });
+
+  it("saves a slice and replays it without calling Desearch", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
+    const commit = "a".repeat(40);
+    const saved = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: {
+        POSTS_PROVIDER: "mock",
+        ANALYSIS_PROVIDER: "mock",
+        DESEARCH_LIVE_ENABLED: "false",
+        LLM_LIVE_ENABLED: "false",
+        CHUTES_API_KEY: "",
+        DESEARCH_API_KEY: "",
+      },
+      cache: createFetchSliceCache(),
+      sliceDirectory: dir,
+      readCommit: () => commit,
+    });
+    const files = readdirSync(dir);
+    assert.equal(files.length, 1);
+    const raw = readFileSync(path.join(dir, files[0]!), "utf8");
+    assert.equal(raw.includes("billing"), false);
+    assert.equal(raw.includes("authorization"), false);
+    const transport: DesearchTransport = {
+      async execute() {
+        throw new Error("Desearch must not be called");
+      },
+    };
+    const replayed = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      replayPath: path.join(dir, files[0]!),
+      env: {
+        POSTS_PROVIDER: "desearch",
+        DESEARCH_LIVE_ENABLED: "true",
+        DESEARCH_API_KEY: "unit-test-only-not-a-secret",
+        ANALYSIS_PROVIDER: "mock",
+        LLM_LIVE_ENABLED: "false",
+        CHUTES_API_KEY: "",
+      },
+      cache: createFetchSliceCache(),
+      sliceDirectory: dir,
+      desearchTransport: transport,
+    });
+    assert.equal(readdirSync(dir).length, 1);
+    assert.equal(replayed.replayed, true);
+    assert.equal(replayed.fetchedCommit, commit);
+    assert.equal(replayed.fetchedAt, saved.fetchedAt);
+    assert.equal(replayed.postsSource, "fixtures");
+    assert.equal(replayed.analysisSource, "mock-rules");
+    const text = formatFullReport(question.text, [], replayed.reports, {
+      postsSource: replayed.postsSource,
+      analysisSource: replayed.analysisSource,
+      referenceDate: replayed.referenceDate,
+      fetchedAt: replayed.fetchedAt,
+      fetchedCommit: replayed.fetchedCommit,
+      reused: replayed.reused,
+      replayed: replayed.replayed,
+      billing: replayed.billing,
+    });
+    assert.match(text, /Slice: replayed/);
+    assert.match(text, new RegExp(`Fetched at: ${saved.fetchedAt}`));
+    assert.match(text, new RegExp(`Fetched commit: ${commit}`));
+  });
+
+  it("still calls Chutes when a replay selects live analysis", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
+    await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: { POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" },
+      cache: createFetchSliceCache(),
+      sliceDirectory: dir,
+      readCommit: () => "e".repeat(40),
+    });
+    const file = path.join(dir, readdirSync(dir)[0]!);
+    let desearchCalls = 0;
+    const model = chutesTransport(classified(
+      "bullish",
+      "The supplied originals say growth remains constructive.",
+      ["b1", "b2"],
+    ));
+    await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      replayPath: file,
+      env: desearchEnv(),
+      cache: createFetchSliceCache(),
+      sliceDirectory: dir,
+      desearchTransport: {
+        async execute() {
+          desearchCalls += 1;
+          throw new Error("Desearch must not be called");
+        },
+      },
+      chutesTransport: model.transport,
+    });
+    assert.equal(desearchCalls, 0);
+    assert.equal(model.calls.length, 1);
+    assert.equal(readdirSync(dir).length, 1);
+  });
+
+  it("rejects a replay whose handles do not match before any request", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
+    await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: { POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" },
+      cache: createFetchSliceCache(),
+      sliceDirectory: dir,
+      readCommit: () => "b".repeat(40),
+    });
+    const file = path.join(dir, readdirSync(dir)[0]!);
+    const transport: DesearchTransport = {
+      async execute() {
+        throw new Error("Desearch must not be called");
+      },
+    };
+    await assert.rejects(
+      () =>
+        runReport(["otherhandle"], question, {
+          referenceDate: "2026-11-02",
+          replayPath: file,
+          env: desearchEnv(),
+          cache: createFetchSliceCache(),
+          desearchTransport: transport,
+        }),
+      (err: unknown) =>
+        err instanceof ReportConfigError &&
+        /No request was sent/.test(err.message),
+    );
+  });
+
+  it("rejects replay combined with a fresh fetch before any request", async () => {
+    await assert.rejects(
+      () =>
+        runReport(["bullmacro"], question, {
+          referenceDate: "2026-11-02",
+          fresh: true,
+          replayPath: "missing-slice.json",
+          env: desearchEnv(),
+          cache: createFetchSliceCache(),
+          desearchTransport: {
+            async execute() {
+              throw new Error("Desearch must not be called");
+            },
+          },
+        }),
+      (err: unknown) =>
+        err instanceof ReportConfigError && /--replay/.test(err.message),
     );
   });
 });

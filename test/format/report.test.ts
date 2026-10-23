@@ -117,6 +117,18 @@ describe("formatFullReport source labels", () => {
     assert.match(text, /Posts source: desearch/);
     assert.match(text, /Slice: reused/);
     assert.match(text, /Fetched at: 2026-10-09T12:00:00.000Z/);
+    const withCommit = formatFullReport("Question?", [], [], {
+      postsSource: "desearch",
+      analysisSource: "chutes",
+      referenceDate: "2026-10-09",
+      fetchedAt: "2026-10-09T12:00:00.000Z",
+      fetchedCommit: "d".repeat(40),
+      reused: false,
+      replayed: true,
+      billing: [],
+    });
+    assert.match(withCommit, /Slice: replayed/);
+    assert.match(withCommit, /Fetched commit: d{40}/);
     assert.match(text, /usage_count=2/);
     assert.doesNotMatch(text, /synthetic fixture/);
     assert.doesNotMatch(text, /Fictional/);

@@ -1,3 +1,6 @@
+# Saved post slices
+data/slices/
+
 # Secrets and local env
 .env
 .env.*

@@ -33,6 +33,14 @@ import {
   sharedFetchSliceCache,
   type FetchSliceCache,
 } from "./runtime/fetchCache.js";
+import {
+  DEFAULT_SLICE_DIRECTORY,
+  SavedSliceError,
+  loadSlice,
+  outcomesForSlice,
+  readRepositoryCommit,
+  saveSlice,
+} from "./runtime/savedSlice.js";
 import type {
   AnalysisProviderLabel,
   AnalysisQuestion,
@@ -48,7 +56,9 @@ export interface RunReportResult {
   analysisSource: AnalysisProviderLabel;
   referenceDate: string;
   fetchedAt: string;
+  fetchedCommit: string;
   reused: boolean;
+  replayed: boolean;
   billing: DesearchBilling[];
   fetchOutcomes: FetchOutcome[];
   reports: PersonOutlookReport[];
@@ -57,6 +67,11 @@ export interface RunReportResult {
 export interface RunReportOptions {
   referenceDate: string;
   fresh?: boolean;
+  /** Load this slice file instead of fetching. Never calls Desearch. */
+  replayPath?: string;
+  /** Directory for newly fetched slices. Defaults to data/slices. */
+  sliceDirectory?: string;
+  readCommit?: () => string;
   env?: NodeJS.ProcessEnv;
   cache?: FetchSliceCache;
   desearchTransport?: DesearchTransport;
@@ -76,7 +91,9 @@ export interface ReportFailureDetails {
   analysisSource: AnalysisProviderLabel;
   referenceDate: string;
   fetchedAt: string;
+  fetchedCommit?: string;
   reused: boolean;
+  replayed?: boolean;
   /** False when retrieval failed before a slice was stored. */
   sliceStored: boolean;
   billing: DesearchBilling[];
@@ -136,7 +153,7 @@ export async function runReport(
   const desearchSettings = loadDesearchSettings(env);
   const llm = loadLlmRuntimeConfig(env);
   const problems: string[] = [];
-  if (postsSelected === "desearch" && !desearchSettings.liveEligible) {
+  if (!options.replayPath && postsSelected === "desearch" && !desearchSettings.liveEligible) {
     problems.push(
       "Desearch was selected but is not fully enabled. Set POSTS_PROVIDER=desearch, DESEARCH_LIVE_ENABLED=true, and a real DESEARCH_API_KEY.",
     );
@@ -151,7 +168,8 @@ export async function runReport(
     throw new ReportConfigError(`${problems.join(" ")} No request was sent.`);
   }
 
-  const postsSource: PostSource = postsSelected === "desearch" ? "desearch" : "fixtures";
+  let postsSource: PostSource =
+    !options.replayPath && postsSelected === "desearch" ? "desearch" : "fixtures";
   const analysisSource: AnalysisProviderLabel = llm.eligible ? "chutes" : "mock-rules";
 
   if (analysisSource === "chutes") {
@@ -182,23 +200,52 @@ export async function runReport(
 
   let fetchOutcomes: FetchOutcome[];
   let fetchedAt: string;
+  let fetchedCommit: string;
   let reused: boolean;
-  if (!options.fresh) {
+  let replayed = false;
+  if (options.replayPath) {
+    if (options.fresh) {
+      throw new ReportConfigError(
+        "--replay cannot be combined with a fresh fetch. No request was sent.",
+      );
+    }
+    let saved;
+    try {
+      saved = loadSlice(options.replayPath);
+    } catch (err) {
+      const message = err instanceof SavedSliceError ? err.message : "Could not read the slice file";
+      throw new ReportConfigError(`${message} No request was sent.`);
+    }
+    if (saved.handles.join("\n") !== handles.join("\n")) {
+      throw new ReportConfigError(
+        "Slice handles do not match this run. No request was sent.",
+      );
+    }
+    postsSource = saved.postsSource;
+    fetchOutcomes = saved.outcomes;
+    fetchedAt = saved.fetchedAt;
+    fetchedCommit = saved.fetchedCommit;
+    reused = false;
+    replayed = true;
+  } else if (!options.fresh) {
     const hit = cache.read(key);
     if (hit) {
       fetchOutcomes = hit.outcomes;
       fetchedAt = hit.fetchedAt;
+      fetchedCommit = hit.fetchedCommit;
       reused = true;
     } else {
       const stored = await fetchAndStore();
       fetchOutcomes = stored.outcomes;
       fetchedAt = stored.fetchedAt;
+      fetchedCommit = stored.fetchedCommit;
       reused = false;
     }
   } else {
     const stored = await fetchAndStore();
     fetchOutcomes = stored.outcomes;
     fetchedAt = stored.fetchedAt;
+    fetchedCommit = stored.fetchedCommit;
     reused = false;
   }
 
@@ -208,7 +255,9 @@ export async function runReport(
     analysisSource,
     referenceDate,
     fetchedAt,
+    fetchedCommit,
     reused,
+    replayed,
     sliceStored: true,
     billing,
     providerUsages: [],
@@ -219,13 +268,19 @@ export async function runReport(
     analysisSource,
     referenceDate,
     fetchedAt,
+    fetchedCommit,
     reused,
+    replayed,
     billing,
     fetchOutcomes,
     reports,
   };
 
-  async function fetchAndStore(): Promise<{ outcomes: FetchOutcome[]; fetchedAt: string }> {
+  async function fetchAndStore(): Promise<{
+    outcomes: FetchOutcome[];
+    fetchedAt: string;
+    fetchedCommit: string;
+  }> {
     let outcomes: FetchOutcome[];
     try {
       const fetcher = createPostsFetcherFromEnv({
@@ -241,7 +296,35 @@ export async function runReport(
     } catch (err) {
       throw retrievalFailure(err);
     }
-    return cache.store(key, outcomes);
+    const read = options.readCommit?.();
+    const commit = typeof read === "string" && read.trim() !== "" ? read : readRepositoryCommit();
+    const stored = cache.store(key, outcomes, commit);
+    try {
+      saveSlice(options.sliceDirectory ?? DEFAULT_SLICE_DIRECTORY, {
+        version: 1,
+        fetchedAt: stored.fetchedAt,
+        fetchedCommit: commit,
+        referenceDate: analysisDate,
+        handles,
+        postsSource,
+        outcomes: outcomesForSlice(outcomes),
+      });
+    } catch (err) {
+      const message = err instanceof SavedSliceError ? err.message : "Could not save the fetched slice";
+      throw new ReportRunError(`${message} No further request was sent.`, {
+        postsSource,
+        analysisSource,
+        referenceDate: analysisDate,
+        fetchedAt: stored.fetchedAt,
+        fetchedCommit: commit,
+        reused: false,
+        replayed: false,
+        sliceStored: true,
+        billing: collectBilling(outcomes),
+        providerUsages: [],
+      });
+    }
+    return { outcomes: stored.outcomes, fetchedAt: stored.fetchedAt, fetchedCommit: commit };
   }
 
   function retrievalFailure(err: unknown): ReportConfigError | ReportRunError {
@@ -251,7 +334,9 @@ export async function runReport(
         analysisSource,
         referenceDate: analysisDate,
         fetchedAt: "",
+        fetchedCommit: "",
         reused: false,
+        replayed: false,
         sliceStored: false,
         billing: err.billing,
         providerUsages: [],

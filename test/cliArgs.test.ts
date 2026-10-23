@@ -144,6 +144,14 @@ describe("parseCliArgs", () => {
     assert.match(result.stdout ?? "", /Question: What is each analyst's current market outlook\?/);
   });
 
+  it("reads a --replay path and rejects a missing value", () => {
+    const opts = parseCliArgs(["--replay", "data/slices/example.json", "--handles", "bullmacro"]);
+    assert.equal(opts.replayPath, "data/slices/example.json");
+    assert.equal(opts.flagErrors.length, 0);
+    const missing = parseCliArgs(["--replay"]);
+    assert.ok(missing.flagErrors.some((error) => error.includes("--replay")));
+  });
+
   it("rejects an impossible --as-of date", () => {
     const opts = parseCliArgs(["--as-of", "2026-02-31"]);
     assert.ok(opts.flagErrors.some((error) => error.includes("--as-of")));

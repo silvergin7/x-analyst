@@ -3,6 +3,7 @@ import type { FetchOutcome } from "../types.js";
 export interface StoredFetchSlice {
   outcomes: FetchOutcome[];
   fetchedAt: string;
+  fetchedCommit: string;
 }
 
 /**
@@ -12,7 +13,7 @@ export interface StoredFetchSlice {
  */
 export interface FetchSliceCache {
   read(key: string): StoredFetchSlice | undefined;
-  store(key: string, outcomes: FetchOutcome[]): StoredFetchSlice;
+  store(key: string, outcomes: FetchOutcome[], fetchedCommit?: string): StoredFetchSlice;
 }
 
 export function fetchCacheKey(input: {
@@ -48,17 +49,20 @@ export function createFetchSliceCache(
       return {
         outcomes: structuredClone(entry.slice.outcomes),
         fetchedAt: entry.slice.fetchedAt,
+        fetchedCommit: entry.slice.fetchedCommit,
       };
     },
-    store(key, outcomes) {
+    store(key, outcomes, fetchedCommit = "") {
       const stored = {
         outcomes: structuredClone(outcomes),
         fetchedAt: now().toISOString(),
+        fetchedCommit,
       };
       entry = { key, slice: stored };
       return {
         outcomes: structuredClone(stored.outcomes),
         fetchedAt: stored.fetchedAt,
+        fetchedCommit: stored.fetchedCommit,
       };
     },
   };

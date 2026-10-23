@@ -24,7 +24,7 @@ async function main(): Promise<void> {
     const result = await runReport(
       options.handles,
       { text: options.question },
-      { referenceDate, fresh: options.fresh },
+      { referenceDate, fresh: options.fresh, replayPath: options.replayPath },
     );
 
     const fetchNotes = [
@@ -39,7 +39,9 @@ async function main(): Promise<void> {
       analysisSource: result.analysisSource,
       referenceDate: result.referenceDate,
       fetchedAt: result.fetchedAt,
+      fetchedCommit: result.fetchedCommit,
       reused: result.reused,
+      replayed: result.replayed,
       billing: result.billing,
     });
     process.stdout.write(output);

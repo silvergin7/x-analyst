@@ -10,6 +10,8 @@ export interface CliOptions {
   asOf?: string;
   /** True when the user asked to fetch a new slice. */
   fresh: boolean;
+  /** Slice file to analyze instead of fetching. */
+  replayPath?: string;
   /** Flags passed without a required value (e.g. `--handles` at end of argv). */
   flagErrors: string[];
 }
@@ -54,6 +56,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
   let question: string | undefined;
   let asOf: string | undefined;
   let fresh = false;
+  let replayPath: string | undefined;
   let handlesFlagSeen = false;
   let questionFlagSeen = false;
   const flagErrors: string[] = [];
@@ -109,6 +112,20 @@ export function parseCliArgs(argv: string[]): CliOptions {
       fresh = true;
       continue;
     }
+    if (arg === "--replay" || arg.startsWith("--replay=")) {
+      const value =
+        arg === "--replay"
+          ? nextArgLooksLikeValue(argv, i)
+            ? argv[++i]!
+            : ""
+          : arg.slice("--replay=".length);
+      if (value === "") {
+        flagErrors.push("Missing value for --replay (expected a slice file path)");
+      } else {
+        replayPath = value;
+      }
+      continue;
+    }
     if (arg === "--as-of" || arg.startsWith("--as-of=")) {
       const value =
         arg === "--as-of"
@@ -141,6 +158,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     question: useDefaultQuestion ? DEFAULT_QUESTION : (question ?? ""),
     asOf,
     fresh,
+    replayPath,
     flagErrors,
   };
 }

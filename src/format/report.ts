@@ -181,7 +181,9 @@ export interface ReportRunContext {
   analysisSource: AnalysisProviderLabel;
   referenceDate: string;
   fetchedAt: string;
+  fetchedCommit?: string;
   reused: boolean;
+  replayed?: boolean;
   billing: DesearchBilling[];
 }
 
@@ -208,9 +210,13 @@ export function formatReportFailure(
     if (line.length > 0) lines.push(`Desearch billing: ${line}`);
   }
   if (details.sliceStored && details.fetchedAt) {
+    const sliceLabel = details.replayed ? "replayed" : details.reused ? "reused" : "fetched";
     lines.push(
-      `Posts source: ${details.postsSource}. Fetched at: ${details.fetchedAt}. Slice: ${details.reused ? "reused" : "fetched"}.`,
+      `Posts source: ${details.postsSource}. Fetched at: ${details.fetchedAt}. Slice: ${sliceLabel}.`,
     );
+    if (details.fetchedCommit) {
+      lines.push(`Fetched commit: ${details.fetchedCommit}`);
+    }
   } else {
     lines.push(`Posts source: ${details.postsSource}. Slice: not stored.`);
   }
@@ -238,8 +244,13 @@ export function formatFullReport(
     parts.push(`Posts source: ${context.postsSource}`);
     parts.push(`Analysis source: ${context.analysisSource}`);
     parts.push(`Analysis reference date: ${context.referenceDate}`);
-    parts.push(context.reused ? "Slice: reused" : "Slice: fetched");
+    parts.push(
+      context.replayed ? "Slice: replayed" : context.reused ? "Slice: reused" : "Slice: fetched",
+    );
     parts.push(`Fetched at: ${context.fetchedAt}`);
+    if (context.fetchedCommit) {
+      parts.push(`Fetched commit: ${context.fetchedCommit}`);
+    }
     for (const item of context.billing) {
       const line = formatBilling(item);
       if (line.length > 0) parts.push(`Desearch billing: ${line}`);
