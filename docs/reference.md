@@ -48,8 +48,8 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 | `LLM_INPUT_MAX_CHARS` | Character budget for post text sent to the model (default 20,000). |
 | `ANALYST_LIST_PATH` | JSON roster when `--handles` is omitted on analyze. |
 | `LLM_TOKENIZER_DIR` | Optional override directory for pinned tokenizer files. |
-| `DESEARCH_API_BASE` | Optional Desearch API base URL (default `https://api.desearch.ai`). |
-| `CHUTES_CHAT_COMPLETIONS_URL` | Optional Chutes chat completions URL. |
+| `DESEARCH_API_BASE` | Optional Desearch API base URL (default `https://api.desearch.ai`). Preflight prints **scheme, host, and port only**. A non-default origin prints a warning that your API key will be sent there. Overrides must be `http` or `https` with no userinfo, query, or fragment. Non-default origins must use **https** unless the hostname is exactly `localhost` or `127.0.0.1`. |
+| `CHUTES_CHAT_COMPLETIONS_URL` | Optional Chutes chat completions URL (default `https://llm.chutes.ai/v1/chat/completions`). Same preflight origin, warning, and HTTPS rules as `DESEARCH_API_BASE`. |
 | `X_ANALYST_SLICE_DIR` | Directory for saved fetch slices (default `data/slices`). |
 | `X_ANALYST_REPORTS_DIR` | Directory for JSON reports (default `data/reports`). |
 
@@ -58,6 +58,12 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 Live fetch uses **GET** `https://api.desearch.ai/twitter/user/posts` (or `DESEARCH_API_BASE`) with query parameters **`username`** and optional **`cursor`**. The builder does **not** send **`count`** (`src/fetch/desearch/buildRequest.ts`).
 
 Pagination stops on lookback, request budgets, or no further cursor. Every valid post in a paid response is kept; duplicate IDs are removed.
+
+## Provider URL overrides and transport
+
+- **Desearch transport** (`src/fetch/desearch/httpTransport.ts`): uses `node:https.request`. Request URLs must use **`https:`**; an `http://` base fails at fetch time with “Desearch request URL must use https:”.
+- **Chutes transport** (`src/analyze/chutesClient.ts`): uses `fetch(url)` with the configured completions URL. **`http://` is allowed** (tests use `http://127.0.0.1:9`).
+- Preflight compares overrides to defaults by **origin** (scheme + host + port), so the default Chutes path does not count as a custom host.
 
 ## Desearch preflight list-price worst case
 

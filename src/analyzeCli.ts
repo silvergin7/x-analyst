@@ -15,6 +15,7 @@ import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 import { confirmProceed } from "./runtime/confirmationGate.js";
 import { EnvFileError, loadEnvFileIntoProcess } from "./runtime/loadEnvFile.js";
 import { liveProviderEnvLooksDisabled, offlineProviderEnv } from "./runtime/offlineProviderEnv.js";
+import { validateProviderOverrides } from "./runtime/providerUrlPreflight.js";
 
 const ENV_FILE = ".env";
 
@@ -98,6 +99,15 @@ async function main(): Promise<void> {
   const llm = loadLlmRuntimeConfig(runEnv);
 
   if (!options.offline) {
+    const urlOverrides = validateProviderOverrides(runEnv, {
+      offline: false,
+      replay: options.replayPath !== undefined,
+    });
+    if (!urlOverrides.ok) {
+      process.stderr.write(`Preflight error: ${urlOverrides.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
     const tokenizerMessage = liveTokenizerPreflightMessage(runEnv);
     if (tokenizerMessage !== null) {
       process.stderr.write(`${tokenizerMessage}\n`);

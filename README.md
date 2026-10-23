@@ -73,7 +73,7 @@ Example excerpt (trimmed):
 
 2. Install the pinned Qwen3 tokenizer files: [docs/tokenizer.md](docs/tokenizer.md).
 3. Run `npm run analyze`. Without `--handles`, the run uses every handle listed in `config/analysts.json`; each handle is fetched and billed separately. You can pass `--handles`, `--question`, and other flags from [docs/reference.md](docs/reference.md).
-4. Read the preflight summary: it lists handles, limits, and worst-case local cost estimates (not provider charges).
+4. Read the preflight summary: it lists handles, limits, provider hosts (scheme, host, and port only), and worst-case local cost estimates (not provider charges).
 5. Type `y` at `Proceed? [y/N]` to send paid requests, or anything else to stop with no fetch and no model call.
 
 ## View a report

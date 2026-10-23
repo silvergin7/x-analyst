@@ -15,6 +15,10 @@ import {
   desearchWorstCaseListPriceUsd,
   sampleDesearchRequest,
 } from "./runtime/desearchPreflight.js";
+import {
+  providerHostPreflightLines,
+  providerOverrideWarningLines,
+} from "./runtime/providerUrlPreflight.js";
 import type { Post } from "./types.js";
 
 function chutesEstimateForPosts(input: {
@@ -68,7 +72,7 @@ export function chutesWorstCaseEstimateUsd(input: {
   return total;
 }
 
-export function printAnalyzePreflight(input: {
+export function buildAnalyzePreflightLines(input: {
   handles: readonly string[];
   question: string;
   referenceDate: string;
@@ -76,7 +80,8 @@ export function printAnalyzePreflight(input: {
   replay: boolean;
   offline: boolean;
   env: NodeJS.ProcessEnv;
-}): void {
+}): string[] {
+  const mode = { offline: input.offline, replay: input.replay };
   const sample = sampleDesearchRequest();
   const runBudget = loadDesearchRequestBudget(input.env);
   const perHandleCap = loadDesearchMaxRequestsPerHandle(input.env);
@@ -90,6 +95,8 @@ export function printAnalyzePreflight(input: {
         sampleRequest: sample,
       });
   const lines = [
+    ...providerOverrideWarningLines(input.env, mode),
+    ...providerHostPreflightLines(input.env, mode),
     `Handles: ${input.handles.join(", ")}`,
     `Question: ${input.question || DEFAULT_QUESTION}`,
     `Analysis reference date: ${input.referenceDate}`,
@@ -121,5 +128,17 @@ export function printAnalyzePreflight(input: {
       `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} summed across handles`,
     );
   }
-  process.stdout.write(`${lines.join("\n")}\n`);
+  return lines;
+}
+
+export function printAnalyzePreflight(input: {
+  handles: readonly string[];
+  question: string;
+  referenceDate: string;
+  model: string;
+  replay: boolean;
+  offline: boolean;
+  env: NodeJS.ProcessEnv;
+}): void {
+  process.stdout.write(`${buildAnalyzePreflightLines(input).join("\n")}\n`);
 }
