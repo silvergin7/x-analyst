@@ -69,6 +69,12 @@ Pagination stops on lookback, request budgets, or no further cursor. Every valid
 - **Chutes transport** (`src/analyze/chutesClient.ts`): uses `fetch(url)` with the configured completions URL. **`http://` is allowed** (tests use `http://127.0.0.1:9`).
 - Preflight compares overrides to defaults by **origin** (scheme + host + port), so the default Chutes path does not count as a custom host.
 
+## Preflight output by mode
+
+- **`--offline`:** seven lines only — handles, question, reference date, both Desearch limit labels (`not required offline`), `Desearch: not used (offline)`, `Chutes: not used (offline)`. No hosts, model line, count line, or cost estimates. **`--offline --replay`** uses the same block.
+- **`--replay` (without `--offline`):** Chutes host (origin only), handles, question, reference date, both limit labels (`not required for replay`), Chutes model line, `Desearch: not used (replay), $0.000000`, then the Chutes worst-case local estimate. No Desearch host, count line, or list-price math.
+- **Live fetch:** provider warnings (non-default origins), both hosts, limits, count-on-wire note, Desearch list-price worst case, Chutes worst-case estimate.
+
 ## Desearch preflight list-price worst case
 
 Before confirmation on a live non-replay run, the CLI prints a **list-price** estimate (not `cost_usd` from a response):
