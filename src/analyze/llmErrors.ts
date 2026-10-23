@@ -1,8 +1,9 @@
-import type { ProviderTokenUsage } from "../types.js";
+import type { BudgetEstimate, ProviderTokenUsage } from "../types.js";
 
 export class LlmOutputError extends Error {
   readonly code = "invalid_output" as const;
   providerUsage: ProviderTokenUsage | null = null;
+  estimate?: BudgetEstimate;
 
   constructor(message: string) {
     super(message);
@@ -13,6 +14,7 @@ export class LlmOutputError extends Error {
 export class LlmCitationError extends Error {
   readonly code = "citation" as const;
   providerUsage: ProviderTokenUsage | null = null;
+  estimate?: BudgetEstimate;
 
   constructor(message: string) {
     super(message);

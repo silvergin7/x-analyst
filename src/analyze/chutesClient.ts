@@ -105,28 +105,29 @@ function failWithUsage(
   code: LlmFailureCode,
   message: string,
   usage: ProviderTokenUsage | null,
+  estimate?: BudgetEstimate,
 ): never {
-  const error = new LlmCallError(code, message);
+  const error = new LlmCallError(code, message, estimate);
   error.providerUsage = usage;
   throw error;
 }
 
-function readCompletionContent(payload: unknown): {
+function readCompletionContent(payload: unknown, estimate: BudgetEstimate): {
   content: string;
   usage: ProviderTokenUsage | null;
 } {
   if (!payload || typeof payload !== "object") {
-    throw new LlmCallError("invalid_output", "Chutes returned a non-object body");
+    throw new LlmCallError("invalid_output", "Chutes returned a non-object body", estimate);
   }
   const body = payload as Record<string, unknown>;
   const usage = readUsage(body.usage);
   const choices = body.choices;
   if (!Array.isArray(choices) || choices.length === 0) {
-    failWithUsage("invalid_output", "Chutes returned no choices", usage);
+    failWithUsage("invalid_output", "Chutes returned no choices", usage, estimate);
   }
   const choice = choices[0];
   if (!choice || typeof choice !== "object") {
-    failWithUsage("invalid_output", "Chutes returned an empty choice", usage);
+    failWithUsage("invalid_output", "Chutes returned an empty choice", usage, estimate);
   }
   const choiceRecord = choice as Record<string, unknown>;
   const finishReason = choiceRecord.finish_reason;
@@ -138,20 +139,20 @@ function readCompletionContent(payload: unknown): {
   const refusal = messageRecord?.refusal;
 
   if (typeof refusal === "string" && refusal.trim() !== "") {
-    failWithUsage("refusal", "Chutes refused the request", usage);
+    failWithUsage("refusal", "Chutes refused the request", usage, estimate);
   }
   if (finishReason === "refusal" || finishReason === "content_filter") {
-    failWithUsage("refusal", "Chutes refused the request", usage);
+    failWithUsage("refusal", "Chutes refused the request", usage, estimate);
   }
   if (finishReason === "length") {
-    failWithUsage("length", "Chutes stopped because max_tokens was exhausted", usage);
+    failWithUsage("length", "Chutes stopped because max_tokens was exhausted", usage, estimate);
   }
   if (finishReason !== "stop") {
-    failWithUsage("invalid_output", "Chutes returned an unexpected finish_reason", usage);
+    failWithUsage("invalid_output", "Chutes returned an unexpected finish_reason", usage, estimate);
   }
   const content = messageRecord?.content;
   if (typeof content !== "string" || content.trim() === "") {
-    failWithUsage("invalid_output", "Chutes returned no message content", usage);
+    failWithUsage("invalid_output", "Chutes returned no message content", usage, estimate);
   }
   return { content, usage };
 }
@@ -166,6 +167,7 @@ export async function requestChutesCompletion(
   transport: ChutesTransport,
   maxTokens?: number,
   aliases?: readonly string[],
+  onEstimate?: (estimate: BudgetEstimate) => void,
 ): Promise<ChutesCompletion> {
   if (!config.eligible) {
     throw new LlmCallError(
@@ -192,6 +194,7 @@ export async function requestChutesCompletion(
     );
   }
 
+  onEstimate?.(estimate);
   const signal = AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS);
   let response: ChutesTransportResponse;
   try {
@@ -205,15 +208,16 @@ export async function requestChutesCompletion(
     });
   } catch (err) {
     if (isTimeoutError(err)) {
-      throw new LlmCallError("timeout", "Chutes request timed out");
+      throw new LlmCallError("timeout", "Chutes request timed out", estimate);
     }
-    throw new LlmCallError("http", "Chutes request failed before a response");
+    throw new LlmCallError("http", "Chutes request failed before a response", estimate);
   }
 
   if (response.status !== 200) {
     throw new LlmCallError(
       "http",
       `Chutes returned HTTP ${response.status}`,
+      estimate,
     );
   }
 
@@ -221,9 +225,9 @@ export async function requestChutesCompletion(
   try {
     parsed = JSON.parse(response.bodyText);
   } catch {
-    throw new LlmCallError("invalid_output", "Chutes returned invalid JSON");
+    throw new LlmCallError("invalid_output", "Chutes returned invalid JSON", estimate);
   }
 
-  const { content, usage } = readCompletionContent(parsed);
+  const { content, usage } = readCompletionContent(parsed, estimate);
   return { content, estimate, providerUsage: usage, requestBody };
 }

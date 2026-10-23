@@ -1,7 +1,7 @@
 import { UNCLASSIFIED_BY_MODEL_REASON } from "../analyze/classification.js";
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
 import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.js";
-import { formatProviderUsage } from "./llmFixtureReport.js";
+import { formatBudgetEstimate, formatProviderUsage } from "./llmFixtureReport.js";
 import type {
   AnalysisProviderLabel,
   DesearchBilling,
@@ -284,6 +284,7 @@ export function formatFullReport(
     parts.push("");
     for (const failure of handleFailures) {
       parts.push(`@${failure.handle}: ${failure.message}`);
+      if (failure.budgetEstimate) parts.push(formatBudgetEstimate(failure.budgetEstimate));
       if (failure.providerUsage) parts.push(formatProviderUsage(failure.providerUsage));
     }
     parts.push("");

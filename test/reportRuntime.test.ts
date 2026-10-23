@@ -539,8 +539,10 @@ describe("runReport live gates", () => {
       } satisfies DesearchTransport,
     };
     let modelCalls = 0;
+    const order: string[] = [];
     const transport: ChutesTransport = {
       async post() {
+        order.push("post");
         modelCalls += 1;
         if (modelCalls !== 2) {
           return {
@@ -584,7 +586,18 @@ describe("runReport live gates", () => {
       cache,
       desearchTransport: posts.transport,
       chutesTransport: transport,
+      onEstimate: () => {
+        order.push("estimate");
+      },
     });
+    assert.deepEqual(order, [
+      "estimate",
+      "post",
+      "estimate",
+      "post",
+      "estimate",
+      "post",
+    ]);
     assert.equal(posts.calls.length, 3);
     assert.equal(modelCalls, 3);
     assert.deepEqual(
@@ -614,7 +627,12 @@ describe("runReport live gates", () => {
     assert.match(text, /@bullmacro/);
     assert.match(text, /Analysis failures:/);
     assert.match(text, /@bearmacro: Chutes refused the request/);
+    assert.match(text, /Pessimistic estimate/);
+    assert.match(text, /not provider-reported usage/);
+    assert.match(text, /Desearch billing: usage_count=/);
     assert.match(text, /prompt_tokens=9/);
+    assert.equal(typeof result.handleFailures[0]?.budgetEstimate?.estimatedUsd, "number");
+    assert.equal(typeof result.reports[0]?.budgetEstimate?.estimatedUsd, "number");
   });
 
   it("hides provider exception text and keeps billing from responses already received", async () => {

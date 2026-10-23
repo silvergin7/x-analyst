@@ -5,6 +5,7 @@ import {
 } from "../config/llmSettings.js";
 import type {
   AnalysisQuestion,
+  BudgetEstimate,
   PersonOutlookReport,
   Post,
   PostSource,
@@ -63,6 +64,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     transport: ChutesTransport,
     referenceDate?: string,
     postSource: PostSource = "fixtures",
+    private readonly onEstimate?: (estimate: BudgetEstimate) => void,
   ) {
     this.config = config;
     this.transport = transport;
@@ -142,6 +144,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       this.transport,
       classificationOutputTokenCeiling(plan.sent.length),
       aliases.map((item) => item.alias),
+      this.onEstimate,
     );
     try {
       const parsed = parseModelOutlook(
@@ -188,6 +191,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     } catch (err) {
       if (err instanceof LlmOutputError || err instanceof LlmCitationError) {
         err.providerUsage = completion.providerUsage;
+        err.estimate = completion.estimate;
       }
       throw err;
     }

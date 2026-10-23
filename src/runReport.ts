@@ -48,6 +48,7 @@ import type {
   FetchOutcome,
   PersonOutlookReport,
   PostSource,
+  BudgetEstimate,
   ProviderTokenUsage,
 } from "./types.js";
 
@@ -55,6 +56,7 @@ export interface HandleAnalysisFailure {
   handle: string;
   message: string;
   providerUsage?: ProviderTokenUsage;
+  budgetEstimate?: BudgetEstimate;
 }
 
 export interface RunReportResult {
@@ -83,6 +85,8 @@ export interface RunReportOptions {
   cache?: FetchSliceCache;
   desearchTransport?: DesearchTransport;
   chutesTransport?: ChutesTransport;
+  /** Called with the local estimate after it passes the checks and before HTTP. */
+  onEstimate?: (estimate: BudgetEstimate) => void;
 }
 
 /** Configuration or question rejected before any paid request. */
@@ -125,6 +129,14 @@ function collectBilling(outcomes: FetchOutcome[]): DesearchBilling[] {
     if (outcome.billing) billing.push(...outcome.billing);
   }
   return billing;
+}
+
+function estimateFrom(err: unknown): BudgetEstimate | undefined {
+  if (err !== null && typeof err === "object" && "estimate" in err) {
+    const estimate = (err as { estimate?: BudgetEstimate }).estimate;
+    if (estimate && typeof estimate.estimatedUsd === "number") return estimate;
+  }
+  return undefined;
 }
 
 function usageFrom(err: unknown): ProviderTokenUsage | null | undefined {
@@ -358,6 +370,7 @@ export async function runReport(
             options.chutesTransport ?? createFetchChutesTransport(),
             referenceDate,
             postsSource,
+            options.onEstimate,
           )
         : new MockOutlookAnalyzer();
     const reports: PersonOutlookReport[] = [];
@@ -380,10 +393,12 @@ export async function runReport(
           err instanceof LlmOutputError ||
           err instanceof LlmCitationError;
         const failedUsage = usageFrom(err);
+        const estimate = estimateFrom(err);
         handleFailures.push({
           handle: outcome.handle,
           message: known ? err.message : "Analysis failed unexpectedly",
           ...(failedUsage ? { providerUsage: failedUsage } : {}),
+          ...(estimate ? { budgetEstimate: estimate } : {}),
         });
       }
     }

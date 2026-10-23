@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseCliArgs } from "./cliArgs.js";
 import { utcReferenceDate } from "./config/llmSettings.js";
+import { formatBudgetEstimate } from "./format/llmFixtureReport.js";
 import { formatFetchIssue, formatFullReport, formatReportFailure } from "./format/report.js";
 import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 
@@ -24,7 +25,14 @@ async function main(): Promise<void> {
     const result = await runReport(
       options.handles,
       { text: options.question },
-      { referenceDate, fresh: options.fresh, replayPath: options.replayPath },
+      {
+        referenceDate,
+        fresh: options.fresh,
+        replayPath: options.replayPath,
+        onEstimate: (estimate) => {
+          process.stdout.write(`${formatBudgetEstimate(estimate)}\n`);
+        },
+      },
     );
 
     const fetchNotes = [
