@@ -76,6 +76,32 @@ Example excerpt (trimmed):
 4. Read the preflight summary: it lists handles, limits, provider hosts (scheme, host, and port only), and worst-case local cost estimates (not provider charges).
 5. Type `y` at `Proceed? [y/N]` to send paid requests, or anything else to stop with no fetch and no model call.
 
+Example preflight (one handle, default provider hosts, limits from `.env.example`; not provider charges):
+
+```text
+Desearch host: https://api.desearch.ai
+Chutes host: https://llm.chutes.ai
+Handles: bullmacro
+Question: What is each analyst's current market outlook?
+Analysis reference date: 2026-10-10
+DESEARCH_MAX_REQUESTS_PER_RUN: 5
+DESEARCH_MAX_REQUESTS_PER_HANDLE: 3
+Chutes: one request per handle; model Qwen/Qwen3-32B-TEE
+count query parameter: not sent on GET /twitter/user/posts
+Desearch worst-case list-price estimate (not a charge): usage_count 60, list_price_usd 0.009000 (observed usage_count up to 20 per response (count not sent on the request))
+Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $0.007086 summed across handles
+```
+
+- **Desearch host / Chutes host:** where API keys would be sent (scheme, host, and port only).
+- **Handles:** which analysts this run covers.
+- **Question:** the wording passed to the model.
+- **Analysis reference date:** the UTC day used for lookback and staleness checks.
+- **DESEARCH_MAX_REQUESTS_PER_RUN / DESEARCH_MAX_REQUESTS_PER_HANDLE:** the most Desearch requests this run, and each handle, may make.
+- **Chutes model line:** one Chutes request per handle at the priced model name.
+- **count query parameter:** whether the Desearch request includes a `count` field.
+- **Desearch list-price line:** a local upper bound from caps and observed posts per response, not a Desearch charge.
+- **Chutes estimate line:** a local upper bound from synthetic post shapes and token rates, not a Chutes charge.
+
 To re-analyze a saved slice with `--replay path`, you only need Chutes live settings in `.env` (`ANALYSIS_PROVIDER`, `LLM_LIVE_ENABLED`, `CHUTES_API_KEY`). A fresh live fetch still needs the full Desearch and Chutes gates from the table above. Details: [docs/reference.md](docs/reference.md).
 
 ## View a report
