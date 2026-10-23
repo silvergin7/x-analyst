@@ -1,100 +1,106 @@
-# x-analyst
+# X Analyst
 
-Local-first tool: given analyst handles and a question, fetch each handle’s recent posts through Desearch, classify every eligible post with Chutes (`Qwen/Qwen3-32B-TEE`), and produce a cited outlook report per analyst.
+X Analyst reads recent posts from market analysts on X (Twitter), filters noise, and builds a structured outlook report for each handle you choose. It is a local tool for one person on their own machine.
 
-**Normal path:** copy [`.env.example`](.env.example) to `.env`, install the pinned Qwen3 tokenizer under `vendor/qwen3-32b-fp8/`, then run **`npm run analyze`**. The command loads `.env` in code (shell variables override file values), prints a cost preflight, and asks for confirmation before any paid request.
+Desearch (Bittensor Subnet 22) and Chutes (Bittensor Subnet 64) are the live data and model providers. You call them through normal REST APIs and pay in US dollars. This app never connects to a chain, a wallet, or TAO.
 
-**Offline and UI:** `npm start -- --offline` runs fixture posts and keyword rules only. `npm run dev:server` and `npm run dev:web` open a **saved-report viewer** for JSON written by `npm run analyze`; the browser never starts a live fetch or model call.
+## How it works
 
-Both providers are Bittensor subnets used through REST APIs paid in USD. This app does not access a chain, a wallet, or TAO.
+- **Fetch per handle.** Each analyst gets its own set of Desearch requests, newest posts first. There is no single keyword search across X.
+- **Filter reposts.** Pure reposts drop out. Quote tweets keep the analyst’s own text; quoted text from someone else is labeled as context, not as the analyst’s words.
+- **Classify every sent post.** The model assigns relevance, asset class, and stance to each post alias it receives. Up to 10% of posts may be left unclassified.
+- **Outlooks with citations.** You get an overall outlook plus per-asset views. Each cited post ID must match a post that was actually sent.
+- **Local cost and context checks.** Before each Chutes call the app estimates tokens and dollars and refuses the call if the pessimistic estimate exceeds the local ceiling or the context window budget.
+- **Saved slices and JSON reports.** A slice is a saved copy of the posts fetched in one run, stored under `data/slices/` and loaded again with `--replay`. Reports are JSON files under `data/reports/` (or your override) for the web viewer and your records.
 
-## Requirements
+## Limits and costs
 
-- Node.js **20.12+**
+| Item | Value | Where it is defined |
+|------|------:|---------------------|
+| Desearch list price | $0.15 per 1,000 posts | `src/config/desearchSettings.ts` (`DESEARCH_USD_PER_THOUSAND_POSTS`) |
+| Chutes input rate | $0.104 per 1M tokens | `src/config/llmSettings.ts` (`LLM_INPUT_USD_PER_MILLION`) |
+| Chutes output rate | $0.416 per 1M tokens | `src/config/llmSettings.ts` (`LLM_OUTPUT_USD_PER_MILLION`) |
+| Local pre-call budget check | $0.05 per Chutes request | `src/config/llmSettings.ts` (`LLM_CALL_BUDGET_USD`) |
+| Desearch requests per run | Required for live runs; `.env.example` uses 5 | `src/config/desearchSettings.ts`, `.env.example` |
+| Desearch requests per handle | Required for live runs; `.env.example` uses 3 | `src/config/desearchSettings.ts`, `.env.example` |
+| Lookback window | 30 days | `src/config.ts` (`DEFAULT_LOOKBACK_DAYS`) |
+| Post text sent to the model | 20,000 characters | `src/config/llmSettings.ts` (`LLM_INPUT_MAX_CHARS`) |
+| Model context window | 40,960 tokens | `src/config/llmSettings.ts` (`LLM_CONTEXT_WINDOW_TOKENS`) |
+| Context safety margin | 1,024 tokens | `src/config/llmSettings.ts` (`LLM_CONTEXT_SAFETY_MARGIN_TOKENS`) |
+| Priced Chutes model | `Qwen/Qwen3-32B-TEE` | `src/config/llmSettings.ts` (`PRICED_LLM_MODEL`) |
 
-## Install
+Token counting, margins, and drop-oldest behavior: [docs/model-input.md](docs/model-input.md). Desearch request shape and preflight math: [docs/reference.md](docs/reference.md).
 
-```bash
-npm install
+## Try it offline first
+
+1. Install Node.js 20.12 or newer, then run `npm install`.
+2. Run `npm run analyze -- --offline --handles bullmacro`.
+3. When you see `Proceed? [y/N]`, type `y` (or add `--yes` to skip the prompt).
+4. Read the printed report. Fixture handle `bullmacro` returns a mock bullish outlook with evidence links under `fixture.x-analyst.local`.
+
+Example excerpt (trimmed):
+
+```text
+@bullmacro
+  Outlook: bullish (source: mock rules, not LLM)
+  Posts examined: 3
+  Explanation: Mock analysis (not LLM): dominant signal is "bullish" from 2 post(s) with eligible original/commentary text. Original post expresses constructive / bullish macro language.
+  Evidence:
+    - b1 [original] 2026-09-20T14:00:00.000Z https://fixture.x-analyst.local/posts/bullmacro/b1
+    - b2 [original] 2026-09-18T09:30:00.000Z https://fixture.x-analyst.local/posts/bullmacro/b2
 ```
 
-## Qwen3 tokenizer (local input budget)
+## Getting API keys
 
-Live and non-test runs load **`vendor/qwen3-32b-fp8/`** only. Copy the tokenizer files from Hugging Face model **`Qwen/Qwen3-32B-FP8`** at revision **`aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`** (Apache-2.0). The folder is gitignored.
+- **Desearch:** Create an API key at [desearch.ai](https://desearch.ai). Put it in `.env` as `DESEARCH_API_KEY`. Never commit the key to the repo.
+- **Chutes:** Create an API key at [chutes.ai](https://chutes.ai). Put it in `.env` as `CHUTES_API_KEY`. Never commit the key to the repo.
 
-| File | Bytes | SHA-256 |
-|------|------:|---------|
-| `tokenizer.json` | 11,422,654 | `aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4` |
-| `tokenizer_config.json` | 9,732 | `d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101` |
+## Run it live
 
-The app verifies both checksums before counting tokens and stops if either file is missing or wrong. Optional `LLM_TOKENIZER_DIR` may point at another directory, but the files there must match the same sizes and checksums.
+1. Copy `.env.example` to `.env` and fill in live gates (placeholders in the example file only):
 
-Input tokens use the official `chat_template` from `tokenizer_config.json` (rendered with `@huggingface/jinja`), plus the strict `response_format` JSON counted separately (conservative). A calibration margin is added on top of message tokens: **`max(128, ceil(0.02 × messageTokens))`**. The context-window check still reserves **1,024** tokens below the 40,960 window. Output `max_tokens` uses a byte pessimistic worst-case JSON ceiling plus tokenized empty `<think>` wrapper text. Run 7 on `ddcd255` reported **4,763 prompt tokens** on LynAldenContact with the current prompt format; post count for that run is unknown, so treat that figure as a scale check only.
+| Variable | Purpose | Example in `.env.example` |
+|----------|---------|---------------------------|
+| `POSTS_PROVIDER` | Live post source | `desearch` |
+| `DESEARCH_API_KEY` | Desearch credential | `replace_me_only_when_you_are_ready` |
+| `DESEARCH_LIVE_ENABLED` | Allow Desearch fetch | `true` |
+| `DESEARCH_MAX_REQUESTS_PER_RUN` | HTTP cap per run | `5` |
+| `DESEARCH_MAX_REQUESTS_PER_HANDLE` | HTTP cap per handle | `3` |
+| `ANALYSIS_PROVIDER` | Analysis backend | `chutes` |
+| `LLM_LIVE_ENABLED` | Allow Chutes calls | `true` |
+| `CHUTES_API_KEY` | Chutes credential | `replace_me_only_when_you_are_ready` |
+| `LLM_MODEL` | Must match coded rates | `Qwen/Qwen3-32B-TEE` |
 
-## Analyst roster
+2. Install the pinned Qwen3 tokenizer files: [docs/tokenizer.md](docs/tokenizer.md).
+3. Run `npm run analyze`. Without `--handles`, the run uses every handle listed in `config/analysts.json`; each handle is fetched and billed separately. You can pass `--handles`, `--question`, and other flags from [docs/reference.md](docs/reference.md).
+4. Read the preflight summary: it lists handles, limits, and worst-case local cost estimates (not provider charges).
+5. Type `y` at `Proceed? [y/N]` to send paid requests, or anything else to stop with no fetch and no model call.
 
-Live `npm run analyze` reads [`config/analysts.json`](config/analysts.json) when `--handles` is omitted. Override the path with `ANALYST_LIST_PATH`. `--handles` overrides the file with the same validation rules (including duplicate rejection).
+## View a report
 
-## Live analyze
+1. In one terminal, run `npm run dev:server` (API on `http://127.0.0.1:3001`).
+2. In a second terminal, run `npm run dev:web` and open `http://127.0.0.1:5173` in your browser.
+3. Pick a saved JSON report from `data/reports/` or upload a file from an analyze run. The viewer shows classifications, exclusions, costs, and handle failures for handles that did not complete. It does not start a live fetch or model call.
 
-```bash
-npm run analyze
-```
+## What's simplified / known limits
 
-Defaults: question **`What is each analyst's current market outlook?`**, analysis reference date **UTC today**. Both appear in the preflight summary.
+- You maintain the analyst list manually (`config/analysts.json` or `--handles`). There is no X List sync or OAuth.
+- Posts with images are flagged; the model only sees text.
+- Local estimates and list-price math are not the same as provider-reported charges on a live bill.
+- Desearch requests do not send a `count` parameter, so preflight assumes up to 20 billable posts per HTTP response when estimating list price (see [docs/reference.md](docs/reference.md)).
+- Offline mock analysis uses keyword rules, not the LLM.
 
-Flags:
-
-- **`--offline`** — mock posts and mock analysis (tests and local checks).
-- **`--yes`** — skip the `Proceed? [y/N]` prompt (use only when an approved live run names it).
-- **`--replay path`** — analyze a saved slice without Desearch ($0 fetch in preflight).
-- **`--output path`** — JSON report path (default under `data/reports/`).
-- **`--handles a,b`**, **`--question "..."`**, **`--as-of YYYY-MM-DD`**, **`--fresh`**.
-
-Missing or malformed `.env` keys stop the run before any request when not using `--offline`.
-
-## Offline CLI
-
-```bash
-npm start -- --offline
-```
-
-Without **`--offline`**, `npm start` exits with an error and points to `npm run analyze`.
-
-Offline runs use fixture handles only when you pass **`--handles`**; otherwise the roster comes from `config/analysts.json`.
-
-## Web report viewer
-
-```bash
-npm run dev:server
-npm run dev:web
-```
-
-Open reports saved under `data/reports/` or upload a JSON file from an `npm run analyze` run. The API exposes `GET /api/reports` and `GET /api/reports/<basename>.json` only (no arbitrary paths, no live analysis).
-
-## Test and typecheck
+## Run the tests
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-Tests force live providers off. Vendor-only tests (chat-template golden string and 31/48/55 fit tables) run when `vendor/qwen3-32b-fp8/` matches the pinned checksums; otherwise they are **skipped**, not passed.
+Tests force live providers off. A few tests need the vendor tokenizer tree and skip visibly when `vendor/qwen3-32b-fp8/` is missing.
 
-## Pipeline summary
+## More detail
 
-Desearch: **`GET https://api.desearch.ai/twitter/user/posts`**. The current request builder sends `username` and optional `cursor` only (**`count` is not sent**). Preflight Desearch list-price worst case uses planned HTTP requests per handle times **`max(count sent, 20)`**, with **20** labeled as the observed maximum `usage_count` per response (not a documented API default).
-
-Chutes: one request per handle, strict JSON schema, `/no_think`, local **$0.05** pre-call estimate, context window **40,960 − 1,024** including `max_tokens`. Provider-reported charges stay separate from local estimates.
-
-Slices save under `data/slices/` for `--replay`. See earlier sections in this file for post handling, classification, citations, and limits (`DESEARCH_MAX_REQUESTS_PER_RUN`, `DESEARCH_MAX_REQUESTS_PER_HANDLE`, `LLM_INPUT_MAX_CHARS`, lookback, and failure isolation).
-
-## Opt-in Chutes fixture check
-
-`npm run analyze:llm-fixture -- <handle>` remains a separate fixture-only Chutes smoke path. Do not run it live without explicit approval.
-
-## Limitations
-
-- Manual roster; no X Lists, OAuth, accounts, database, or deployment.
-- Mock analysis is keyword rules, not model inference.
-- Retrieved posts are untrusted data; reports keep traceable citations.
+- [docs/tokenizer.md](docs/tokenizer.md): install and verify pinned tokenizer files.
+- [docs/model-input.md](docs/model-input.md): token budget, margin, and context window.
+- [docs/reference.md](docs/reference.md): flags, env vars, Desearch requests, and `npm run analyze:llm-fixture`.
