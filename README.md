@@ -39,6 +39,10 @@ The app verifies both checksums before counting tokens and stops if either file 
 
 Input tokens use the official `chat_template` from `tokenizer_config.json` (rendered with `@huggingface/jinja`), plus the strict `response_format` JSON counted separately (conservative). A calibration margin is added on top of message tokens: **`max(128, ceil(0.02 × messageTokens))`**. The context-window check still reserves **1,024** tokens below the 40,960 window. Output `max_tokens` uses a byte pessimistic worst-case JSON ceiling plus tokenized empty `<think>` wrapper text.
 
+## Analyst roster
+
+Live `npm run analyze` reads [`config/analysts.json`](config/analysts.json) when `--handles` is omitted. Override the path with `ANALYST_LIST_PATH`. `--handles` overrides the file with the same validation rules (including duplicate rejection).
+
 ## CLI
 
 Default handles (`bullmacro`, `bearmacro`, `unclearmacro`) and default question:
