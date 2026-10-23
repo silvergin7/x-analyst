@@ -185,6 +185,7 @@ export async function handleApiRequest(
         invalidHandles,
         fetchOutcomes: result.fetchOutcomes,
         reports: result.reports,
+        handleFailures: result.handleFailures,
       });
     } catch (err) {
       if (err instanceof ReportConfigError) {

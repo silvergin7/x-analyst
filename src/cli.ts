@@ -34,17 +34,26 @@ async function main(): Promise<void> {
         .filter((line) => line.length > 0),
     ];
 
-    const output = formatFullReport(options.question, fetchNotes, result.reports, {
-      postsSource: result.postsSource,
-      analysisSource: result.analysisSource,
-      referenceDate: result.referenceDate,
-      fetchedAt: result.fetchedAt,
-      fetchedCommit: result.fetchedCommit,
-      reused: result.reused,
-      replayed: result.replayed,
-      billing: result.billing,
-    });
+    const output = formatFullReport(
+      options.question,
+      fetchNotes,
+      result.reports,
+      {
+        postsSource: result.postsSource,
+        analysisSource: result.analysisSource,
+        referenceDate: result.referenceDate,
+        fetchedAt: result.fetchedAt,
+        fetchedCommit: result.fetchedCommit,
+        reused: result.reused,
+        replayed: result.replayed,
+        billing: result.billing,
+      },
+      result.handleFailures,
+    );
     process.stdout.write(output);
+    if (result.handleFailures.length > 0) {
+      process.exitCode = 1;
+    }
   } catch (err) {
     if (err instanceof ReportConfigError) {
       process.stderr.write(`${err.message}\n`);

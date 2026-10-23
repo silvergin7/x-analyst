@@ -464,21 +464,17 @@ describe("runReport live gates", () => {
       { outlook: "bullish", explanation: "no", evidencePostIds: ["live-1"] },
       { finish_reason: "refusal", usage: { prompt_tokens: 9, completion_tokens: 1, total_tokens: 10 } },
     );
-    await assert.rejects(
-      () =>
-        runReport(["bullmacro"], question, {
-          referenceDate: "2026-11-02",
-          env: desearchEnv(),
-          cache: createFetchSliceCache(),
-          desearchTransport: posts.transport,
-          chutesTransport: model.transport,
-        }),
-      (err: unknown) =>
-        err instanceof ReportRunError &&
-        err.details.providerUsages[0]?.promptTokens === 9 &&
-        err.details.sliceStored === true &&
-        err.details.reused === false,
-    );
+    const result = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: desearchEnv(),
+      cache: createFetchSliceCache(),
+      desearchTransport: posts.transport,
+      chutesTransport: model.transport,
+    });
+    assert.equal(result.reports.length, 0);
+    assert.equal(result.handleFailures[0]?.providerUsage?.promptTokens, 9);
+    assert.equal(result.reused, false);
+    assert.equal(result.fetchedAt.length > 0, true);
     assert.equal(posts.calls.length, 1);
     assert.equal(model.calls.length, 1);
   });
@@ -509,7 +505,7 @@ describe("runReport live gates", () => {
     assert.match(prompt, /Analysis reference date: 2026-11-02/);
   });
 
-  it("keeps earlier billing and both model usages when a later analyst call fails", async () => {
+  it("reports one failed handle and still analyzes the others", async () => {
     const calls: unknown[] = [];
     const posts = {
       calls,
@@ -530,7 +526,7 @@ describe("runReport live gates", () => {
     const transport: ChutesTransport = {
       async post() {
         modelCalls += 1;
-        if (modelCalls === 1) {
+        if (modelCalls !== 2) {
           return {
             status: 200,
             bodyText: JSON.stringify({
@@ -566,29 +562,43 @@ describe("runReport live gates", () => {
       },
     };
     const cache = createFetchSliceCache();
-    await assert.rejects(
-      () =>
-        runReport(["bullmacro", "bearmacro"], question, {
-          referenceDate: "2026-11-02",
-          env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "2" }),
-          cache,
-          desearchTransport: posts.transport,
-          chutesTransport: transport,
-        }),
-      (err: unknown) => {
-        if (!(err instanceof ReportRunError)) return false;
-        assert.equal(err.details.sliceStored, true);
-        assert.deepEqual(
-          err.details.providerUsages.map((usage) => usage.promptTokens),
-          [11, 9],
-        );
-        assert.equal(err.details.billing.length, 2);
-        assert.doesNotMatch(err.message, /Outlook: bullish/);
-        return true;
-      },
+    const result = await runReport(["bullmacro", "bearmacro", "other"], question, {
+      referenceDate: "2026-11-02",
+      env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "3" }),
+      cache,
+      desearchTransport: posts.transport,
+      chutesTransport: transport,
+    });
+    assert.equal(posts.calls.length, 3);
+    assert.equal(modelCalls, 3);
+    assert.deepEqual(
+      result.reports.map((report) => report.handle),
+      ["bullmacro", "other"],
     );
-    assert.equal(posts.calls.length, 2);
-    assert.equal(modelCalls, 2);
+    assert.equal(result.handleFailures.length, 1);
+    assert.equal(result.handleFailures[0]?.handle, "bearmacro");
+    assert.match(result.handleFailures[0]?.message ?? "", /Chutes refused the request/);
+    assert.equal(result.reports[0]?.providerUsage?.promptTokens, 11);
+    assert.equal(result.handleFailures[0]?.providerUsage?.promptTokens, 9);
+    assert.equal(result.billing.length, 3);
+    const text = formatFullReport(
+      question.text,
+      [],
+      result.reports,
+      {
+        postsSource: result.postsSource,
+        analysisSource: result.analysisSource,
+        referenceDate: result.referenceDate,
+        fetchedAt: result.fetchedAt,
+        reused: result.reused,
+        billing: result.billing,
+      },
+      result.handleFailures,
+    );
+    assert.match(text, /@bullmacro/);
+    assert.match(text, /Analysis failures:/);
+    assert.match(text, /@bearmacro: Chutes refused the request/);
+    assert.match(text, /prompt_tokens=9/);
   });
 
   it("hides provider exception text and keeps billing from responses already received", async () => {

@@ -1,5 +1,5 @@
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
-import type { ReportFailureDetails } from "../runReport.js";
+import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.js";
 import { formatProviderUsage } from "./llmFixtureReport.js";
 import type {
   AnalysisProviderLabel,
@@ -238,6 +238,7 @@ export function formatFullReport(
   fetchNotes: string[],
   reports: PersonOutlookReport[],
   context?: ReportRunContext,
+  handleFailures: HandleAnalysisFailure[] = [],
 ): string {
   const parts = [bannerFor(context), ""];
   if (context) {
@@ -267,6 +268,15 @@ export function formatFullReport(
   parts.push("");
   for (const r of reports) {
     parts.push(formatPersonReport(r));
+    parts.push("");
+  }
+  if (handleFailures.length > 0) {
+    parts.push("Analysis failures:");
+    parts.push("");
+    for (const failure of handleFailures) {
+      parts.push(`@${failure.handle}: ${failure.message}`);
+      if (failure.providerUsage) parts.push(formatProviderUsage(failure.providerUsage));
+    }
     parts.push("");
   }
   return parts.join("\n").trimEnd() + "\n";

@@ -51,6 +51,12 @@ import type {
   ProviderTokenUsage,
 } from "./types.js";
 
+export interface HandleAnalysisFailure {
+  handle: string;
+  message: string;
+  providerUsage?: ProviderTokenUsage;
+}
+
 export interface RunReportResult {
   postsSource: PostSource;
   analysisSource: AnalysisProviderLabel;
@@ -62,6 +68,7 @@ export interface RunReportResult {
   billing: DesearchBilling[];
   fetchOutcomes: FetchOutcome[];
   reports: PersonOutlookReport[];
+  handleFailures: HandleAnalysisFailure[];
 }
 
 export interface RunReportOptions {
@@ -250,18 +257,7 @@ export async function runReport(
   }
 
   const billing = collectBilling(fetchOutcomes);
-  const reports = await analyze(fetchOutcomes, {
-    postsSource,
-    analysisSource,
-    referenceDate,
-    fetchedAt,
-    fetchedCommit,
-    reused,
-    replayed,
-    sliceStored: true,
-    billing,
-    providerUsages: [],
-  });
+  const { reports, handleFailures } = await analyze(fetchOutcomes);
 
   return {
     postsSource,
@@ -274,6 +270,7 @@ export async function runReport(
     billing,
     fetchOutcomes,
     reports,
+    handleFailures,
   };
 
   async function fetchAndStore(): Promise<{
@@ -350,10 +347,10 @@ export async function runReport(
     );
   }
 
-  async function analyze(
-    outcomes: FetchOutcome[],
-    details: ReportFailureDetails,
-  ): Promise<PersonOutlookReport[]> {
+  async function analyze(outcomes: FetchOutcome[]): Promise<{
+    reports: PersonOutlookReport[];
+    handleFailures: HandleAnalysisFailure[];
+  }> {
     const analyzer =
       analysisSource === "chutes"
         ? new LlmOutlookAnalyzer(
@@ -364,7 +361,7 @@ export async function runReport(
           )
         : new MockOutlookAnalyzer();
     const reports: PersonOutlookReport[] = [];
-    const providerUsages: ProviderTokenUsage[] = [];
+    const handleFailures: HandleAnalysisFailure[] = [];
     for (const outcome of outcomes) {
       if (outcome.status !== "ok") continue;
       try {
@@ -376,27 +373,20 @@ export async function runReport(
           inputMaxChars,
           duplicatePostsRemoved: outcome.duplicatePostsRemoved,
         });
-        if (report.providerUsage) providerUsages.push(report.providerUsage);
         reports.push(report);
       } catch (err) {
-        const failedUsage = usageFrom(err);
-        if (failedUsage) providerUsages.push(failedUsage);
-        if (
+        const known =
           err instanceof LlmCallError ||
           err instanceof LlmOutputError ||
-          err instanceof LlmCitationError
-        ) {
-          throw new ReportRunError(err.message, {
-            ...details,
-            providerUsages,
-          });
-        }
-        throw new ReportRunError("Analysis failed unexpectedly", {
-          ...details,
-          providerUsages,
+          err instanceof LlmCitationError;
+        const failedUsage = usageFrom(err);
+        handleFailures.push({
+          handle: outcome.handle,
+          message: known ? err.message : "Analysis failed unexpectedly",
+          ...(failedUsage ? { providerUsage: failedUsage } : {}),
         });
       }
     }
-    return reports;
+    return { reports, handleFailures };
   }
 }
