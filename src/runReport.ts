@@ -34,7 +34,7 @@ import {
   type FetchSliceCache,
 } from "./runtime/fetchCache.js";
 import {
-  DEFAULT_SLICE_DIRECTORY,
+  resolveSliceDirectory,
   SavedSliceError,
   loadSlice,
   outcomesForSlice,
@@ -319,7 +319,7 @@ export async function runReport(
     const commit = typeof read === "string" && read.trim() !== "" ? read : readRepositoryCommit();
     const stored = cache.store(key, outcomes, commit);
     try {
-      saveSlice(options.sliceDirectory ?? DEFAULT_SLICE_DIRECTORY, {
+      saveSlice(resolveSliceDirectory(env, options.sliceDirectory), {
         version: 1,
         fetchedAt: stored.fetchedAt,
         fetchedCommit: commit,

@@ -1,8 +1,17 @@
 import type { BudgetEstimate } from "../types.js";
 
 /** Chat completions endpoint for Chutes subnet 64. */
-export const CHUTES_CHAT_COMPLETIONS_URL =
+export const DEFAULT_CHUTES_CHAT_COMPLETIONS_URL =
   "https://llm.chutes.ai/v1/chat/completions";
+
+/** @deprecated Use DEFAULT_CHUTES_CHAT_COMPLETIONS_URL or loadChutesChatCompletionsUrl. */
+export const CHUTES_CHAT_COMPLETIONS_URL = DEFAULT_CHUTES_CHAT_COMPLETIONS_URL;
+
+export function loadChutesChatCompletionsUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.CHUTES_CHAT_COMPLETIONS_URL?.trim();
+  if (raw === undefined || raw === "") return DEFAULT_CHUTES_CHAT_COMPLETIONS_URL;
+  return raw;
+}
 
 /** The only model whose rates are coded for the local budget check. */
 export const PRICED_LLM_MODEL = "Qwen/Qwen3-32B-TEE";
@@ -51,6 +60,10 @@ export const LLM_REQUEST_TIMEOUT_MS = 30_000;
  */
 export const LLM_FRAMING_TOKENS_PER_MESSAGE = 32;
 
+export const LLM_TOKENIZER_CALIBRATION_FIXED = 128;
+
+export const LLM_TOKENIZER_CALIBRATION_RATIO = 0.02;
+
 export const LLM_API_KEY_PLACEHOLDER = "replace_me_only_when_you_are_ready";
 
 /**
@@ -96,6 +109,7 @@ export interface LlmRuntimeConfig {
   liveEnabled: boolean;
   apiKey: string;
   model: string;
+  chatCompletionsUrl: string;
   eligible: boolean;
   reason?: string;
 }
@@ -122,8 +136,9 @@ export function loadLlmRuntimeConfig(
   const apiKey = readEnv(env, "CHUTES_API_KEY");
   const modelRaw = readEnv(env, "LLM_MODEL");
   const model = modelRaw === "" ? PRICED_LLM_MODEL : modelRaw;
+  const chatCompletionsUrl = loadChutesChatCompletionsUrl(env);
 
-  const base = { provider, liveEnabled, apiKey, model };
+  const base = { provider, liveEnabled, apiKey, model, chatCompletionsUrl };
 
   if (provider !== "chutes") {
     return {

@@ -1,15 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { DEFAULT_HANDLES, DEFAULT_QUESTION } from "../../src/config";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../../src/config/timeWindow";
 import type { FetchStopReason } from "../../src/types";
 
 interface MetaResponse {
-  mode: "mock" | "live";
+  mode: "viewer";
   demo: boolean;
   description: string;
-  postsSource: "fixtures" | "desearch";
-  analysisSource: "mock-rules" | "chutes";
-  liveApiEnabled: boolean;
+  liveApiEnabled: false;
 }
 
 type MetaState =
@@ -53,6 +50,21 @@ interface BillingItem {
   currency?: string;
 }
 
+interface PostClassification {
+  postId: string;
+  relevant: boolean;
+  assetClass: string;
+  stance: string;
+  reason: string;
+}
+
+interface HandleFailure {
+  handle: string;
+  message: string;
+  providerUsage?: ProviderUsage;
+  budgetEstimate?: { estimatedUsd: number };
+}
+
 interface OutlookReport {
   handle: string;
   outlook: string;
@@ -79,6 +91,7 @@ interface OutlookReport {
     viewMayBeStale: boolean;
     evidence: EvidenceItem[];
   }>;
+  classifications?: PostClassification[];
 }
 
 type FetchOutcome =
@@ -89,15 +102,19 @@ type FetchOutcome =
   | { status: "empty"; handle: string };
 
 interface AnalyzeSuccess {
+  question: string;
   postsSource: "fixtures" | "desearch";
   analysisSource: "mock-rules" | "chutes";
   referenceDate: string;
   fetchedAt: string;
+  fetchedCommit?: string;
   reused: boolean;
+  replayed?: boolean;
   billing: BillingItem[];
   invalidHandles: InvalidHandle[];
   fetchOutcomes: FetchOutcome[];
   reports: OutlookReport[];
+  handleFailures: HandleFailure[];
 }
 
 interface StatusLine {
@@ -354,6 +371,8 @@ function readReport(value: unknown): OutlookReport | null {
     return null;
   }
   if (value.postsWithMedia !== undefined && !isCount(value.postsWithMedia)) return null;
+  const classifications = readClassifications(value.classifications);
+  if (classifications === null) return null;
   return {
     handle: value.handle,
     outlook: value.outlook,
@@ -381,7 +400,55 @@ function readReport(value: unknown): OutlookReport | null {
       ? { duplicatePostsRemoved: value.duplicatePostsRemoved }
       : {}),
     ...(isCount(value.postsWithMedia) ? { postsWithMedia: value.postsWithMedia } : {}),
+    ...(classifications ? { classifications } : {}),
   };
+}
+
+function readClassifications(value: unknown): PostClassification[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  const rows: PostClassification[] = [];
+  for (const item of value) {
+    if (
+      !isRecord(item) ||
+      !isNonEmptyString(item.postId) ||
+      typeof item.relevant !== "boolean" ||
+      !isNonEmptyString(item.assetClass) ||
+      !isNonEmptyString(item.stance) ||
+      typeof item.reason !== "string"
+    ) {
+      return null;
+    }
+    rows.push({
+      postId: item.postId,
+      relevant: item.relevant,
+      assetClass: item.assetClass,
+      stance: item.stance,
+      reason: item.reason,
+    });
+  }
+  return rows;
+}
+
+function readHandleFailures(value: unknown): HandleFailure[] | null {
+  if (!Array.isArray(value)) return null;
+  const failures: HandleFailure[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || !isNonEmptyString(item.handle) || typeof item.message !== "string") {
+      return null;
+    }
+    failures.push({
+      handle: item.handle,
+      message: item.message,
+      providerUsage: readProviderUsage(item.providerUsage) ?? undefined,
+      budgetEstimate:
+        isRecord(item.budgetEstimate) &&
+        typeof item.budgetEstimate.estimatedUsd === "number"
+          ? { estimatedUsd: item.budgetEstimate.estimatedUsd }
+          : undefined,
+    });
+  }
+  return failures;
 }
 
 function readFetchOutcome(value: unknown): FetchOutcome | null {
@@ -407,8 +474,9 @@ function readAnalyzeSuccess(value: unknown): AnalyzeSuccess | null {
   if (typeof value.reused !== "boolean") return null;
   const billing = readBilling(value.billing);
   if (!billing) return null;
-  const invalidHandles = readInvalidHandles(value.invalidHandles);
-  if (!invalidHandles) return null;
+  const invalidHandles =
+    value.invalidHandles === undefined ? [] : readInvalidHandles(value.invalidHandles);
+  if (invalidHandles === null) return null;
   const fetchOutcomes: FetchOutcome[] = [];
   for (const item of value.fetchOutcomes) {
     const outcome = readFetchOutcome(item);
@@ -421,7 +489,24 @@ function readAnalyzeSuccess(value: unknown): AnalyzeSuccess | null {
     if (!report) return null;
     reports.push(report);
   }
-  return { ...sources, referenceDate: value.referenceDate, fetchedAt: value.fetchedAt, reused: value.reused, billing, invalidHandles, fetchOutcomes, reports };
+  const handleFailures =
+    value.handleFailures === undefined ? [] : readHandleFailures(value.handleFailures);
+  if (handleFailures === null) return null;
+  if (!isNonEmptyString(value.question)) return null;
+  return {
+    ...sources,
+    question: value.question,
+    referenceDate: value.referenceDate,
+    fetchedAt: value.fetchedAt,
+    fetchedCommit: isNonEmptyString(value.fetchedCommit) ? value.fetchedCommit : undefined,
+    reused: value.reused,
+    replayed: typeof value.replayed === "boolean" ? value.replayed : undefined,
+    billing,
+    invalidHandles,
+    fetchOutcomes,
+    reports,
+    handleFailures,
+  };
 }
 
 function sameInvalid(raw: string, handle: string): boolean {
@@ -605,8 +690,45 @@ function ReportCard({
           ))}
         </ul>
       )}
+      {report.classifications && report.classifications.length > 0 && (
+        <>
+          <h4>Classification table</h4>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Post</th>
+                <th scope="col">Relevant</th>
+                <th scope="col">Asset class</th>
+                <th scope="col">Stance</th>
+                <th scope="col">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.classifications.map((row) => (
+                <tr key={row.postId}>
+                  <td>{row.postId}</td>
+                  <td>{row.relevant ? "yes" : "no"}</td>
+                  <td>{row.assetClass}</td>
+                  <td>{row.stance}</td>
+                  <td>{row.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
       {report.analysisInput && report.analysisInput.length > 0 && (
         <>
+          <h4>Excluded and truncated posts</h4>
+          <ul>
+            {report.analysisInput
+              .filter((item) => item.disposition === "excluded")
+              .map((item) => (
+                <li key={`excluded-${item.postId}-${item.reason}`}>
+                  {item.postId}: {item.reason}
+                </li>
+              ))}
+          </ul>
           <h4>Analysis input</h4>
           <ul>
             {report.analysisInput.map((item) => (
@@ -632,9 +754,8 @@ function ReportCard({
 
 export function App() {
   const [metaState, setMetaState] = useState<MetaState>({ status: "loading" });
-  const [handles, setHandles] = useState(DEFAULT_HANDLES.join(","));
-  const [question, setQuestion] = useState(DEFAULT_QUESTION);
-  const [fresh, setFresh] = useState(false);
+  const [reportOptions, setReportOptions] = useState<string[]>([]);
+  const [selectedReport, setSelectedReport] = useState("");
   const [run, setRun] = useState<RunState>({ status: "idle" });
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -655,8 +776,13 @@ export function App() {
           throw new Error(`API returned ${res.status}`);
         }
         const meta = (await res.json()) as MetaResponse;
+        const listRes = await fetch("/api/reports");
+        const listJson = listRes.ok ? ((await listRes.json()) as { reports?: string[] }) : null;
         if (!cancelled) {
           setMetaState({ status: "ok", meta });
+          const reports = Array.isArray(listJson?.reports) ? listJson.reports : [];
+          setReportOptions(reports);
+          if (reports[0]) setSelectedReport(reports[0]);
         }
       } catch (err) {
         if (!cancelled) {
@@ -671,17 +797,12 @@ export function App() {
     };
   }, []);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (inFlight.current) return;
+  async function loadReportFromApi(basename: string) {
+    if (inFlight.current || basename === "") return;
     inFlight.current = true;
     setRun({ status: "loading" });
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fresh ? { handles, question, fresh: true } : { handles, question }),
-      });
+      const res = await fetch(`/api/reports/${encodeURIComponent(basename)}`);
       let payload: unknown;
       try {
         payload = await res.json();
@@ -742,6 +863,37 @@ export function App() {
     }
   }
 
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await loadReportFromApi(selectedReport);
+  }
+
+  async function onUploadJson(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setRun({ status: "loading" });
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text) as unknown;
+      const result = readAnalyzeSuccess(payload);
+      if (!result) {
+        setRun({
+          status: "error",
+          message: "The selected file is not a saved report",
+          invalidHandles: [],
+        });
+        return;
+      }
+      setRun({ status: "ok", result });
+    } catch {
+      setRun({
+        status: "error",
+        message: "Could not read the selected JSON file",
+        invalidHandles: [],
+      });
+    }
+  }
+
   const status =
     run.status === "ok"
       ? statusLines(run.result)
@@ -749,88 +901,52 @@ export function App() {
         ? statusLines({ invalidHandles: run.invalidHandles, fetchOutcomes: [] })
         : [];
   const meta = metaState.status === "ok" ? metaState.meta : null;
-  const mockLabels =
-    !meta || (meta.postsSource === "fixtures" && meta.analysisSource === "mock-rules" && meta.demo);
 
   return (
     <div className="app">
       <header className="demo-banner" role="status">
-        {mockLabels ? (
-          <>
-            <p className="demo-banner__title">
-              Demo mode — fixture posts only; no live API or LLM
-            </p>
-            <p className="demo-banner__sub">
-              This web preview uses local mock data. It does not call Desearch, X, or
-              any paid service.
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="demo-banner__title">
-              Posts source: {meta?.postsSource}. Analysis source: {meta?.analysisSource}.
-            </p>
-            <p className="demo-banner__sub">{meta?.description}</p>
-          </>
-        )}
+        <p className="demo-banner__title">Saved report viewer</p>
+        <p className="demo-banner__sub">{meta?.description}</p>
       </header>
 
       <main className="main">
-        <h1 className="title">{mockLabels ? "x-analyst (mock)" : "x-analyst"}</h1>
+        <h1 className="title">x-analyst report viewer</h1>
         <p className="lede">
-          {mockLabels
-            ? "Enter handles and a question. The report uses fixture posts and fixed keyword rules."
-            : "Enter handles and a question. Labels follow the configured post source and analysis source."}
+          Open a JSON report written by <code>npm run analyze</code>. This page never starts a live
+          fetch or model call.
         </p>
 
-        <form className="analyze-form" aria-label="Analyze analysts" onSubmit={onSubmit}>
-          <label className="analyze-form__field" htmlFor="handles">
-            Handles
-            <input
-              id="handles"
-              name="handles"
-              value={handles}
-              onChange={(event) => setHandles(event.target.value)}
-              autoComplete="off"
-            />
+        <form className="analyze-form" aria-label="Open saved report" onSubmit={onSubmit}>
+          <label className="analyze-form__field" htmlFor="report-id">
+            Saved report
+            <select
+              id="report-id"
+              name="report-id"
+              value={selectedReport}
+              onChange={(event) => setSelectedReport(event.target.value)}
+            >
+              {reportOptions.length === 0 ? (
+                <option value="">No reports in data/reports/</option>
+              ) : (
+                reportOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))
+              )}
+            </select>
           </label>
-          <label className="analyze-form__field" htmlFor="question">
-            Question
-            <textarea
-              id="question"
-              name="question"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              rows={3}
-            />
-          </label>
-          <p className="analyze-form__note" id="question-note">
-            {meta?.analysisSource === "chutes"
-              ? "The question is sent to the model and must be at most 500 characters."
-              : "The mock analyzer uses fixed keyword rules. Changing the question does not change its analysis."}
-          </p>
-          <label className="analyze-form__field" htmlFor="fresh">
-            <input
-              id="fresh"
-              name="fresh"
-              type="checkbox"
-              checked={fresh}
-              onChange={(event) => setFresh(event.target.checked)}
-            />
-            Fetch a new slice
-          </label>
-          <p className="analyze-form__note">
-            Unchecked reuses a matching slice already fetched by this server process.
-            Checked fetches again. A reused slice is not a new fetch. Analysis can
-            still run again.
-          </p>
-          <button type="submit" disabled={run.status === "loading"}>
-            {run.status === "loading" ? "Analyzing…" : "Analyze"}
+          <button type="submit" disabled={run.status === "loading" || selectedReport === ""}>
+            {run.status === "loading" ? "Loading…" : "Open report"}
           </button>
         </form>
+        <label className="analyze-form__field" htmlFor="report-upload">
+          Or upload a report JSON file
+          <input id="report-upload" type="file" accept="application/json,.json" onChange={onUploadJson} />
+        </label>
 
         <section className="results" aria-live="polite" aria-label="Analysis results">
-          {run.status === "loading" && <p className="results__loading">Analyzing…</p>}
+          {run.status === "loading" && <p className="results__loading">Loading…</p>}
           {run.status === "error" && (
             <div>
               <p className="form-error" role="alert">
@@ -857,16 +973,34 @@ export function App() {
           <StatusList lines={status} />
           {run.status === "ok" && (
             <>
+              <p>Question: {run.result.question}</p>
               <p>
                 Posts source: {run.result.postsSource}. Analysis source: {run.result.analysisSource}.
                 Analysis reference date: {run.result.referenceDate}.
               </p>
               <p>
-                {run.result.reused ? "Reused an earlier slice." : "Fetched a new slice."} Fetched at{" "}
-                {run.result.fetchedAt}.
+                Slice:{" "}
+                {run.result.replayed
+                  ? "replayed"
+                  : run.result.reused
+                    ? "reused"
+                    : "fetched"}
+                . Fetched at {run.result.fetchedAt}
+                {run.result.fetchedCommit ? ` (commit ${run.result.fetchedCommit})` : ""}.
               </p>
               {run.result.billing.map((item, index) => (
                 <p key={`billing-${index}`}>{billingText(item)}</p>
+              ))}
+              {run.result.handleFailures.map((failure) => (
+                <p key={failure.handle} className="form-error">
+                  @{failure.handle}: {failure.message}
+                  {failure.budgetEstimate
+                    ? ` Local estimate $${failure.budgetEstimate.estimatedUsd.toFixed(6)} (not provider usage).`
+                    : ""}
+                  {failure.providerUsage
+                    ? ` Provider usage prompt_tokens=${failure.providerUsage.promptTokens}.`
+                    : ""}
+                </p>
               ))}
               {run.result.reports.map((report) => (
                 <ReportCard
@@ -904,18 +1038,8 @@ export function App() {
                 <dd>{metaState.meta.demo ? "yes" : "no"}</dd>
               </div>
               <div>
-                <dt>Posts source</dt>
-                <dd>{metaState.meta.postsSource}</dd>
-              </div>
-              <div>
-                <dt>Analysis</dt>
-                <dd>{metaState.meta.analysisSource}</dd>
-              </div>
-              <div>
                 <dt>Live API</dt>
-                <dd>
-                  {metaState.meta.liveApiEnabled ? "enabled" : "disabled"}
-                </dd>
+                <dd>disabled</dd>
               </div>
               <div className="meta-list__wide">
                 <dt>Description</dt>

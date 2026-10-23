@@ -1,6 +1,7 @@
 import {
   resolveMaxRequestsPerHandleOverride,
   resolveMaxRequestsPerRunOverride,
+  loadDesearchApiBase,
   loadDesearchSettings,
   resolveDesearchApiKey,
   type DesearchSettings,
@@ -73,6 +74,7 @@ export interface DesearchPostsFetcherOptions {
    * Omit it, or pass a non-positive value, for no per-handle limit.
    */
   maxRequestsPerHandle?: number;
+  apiBase?: string;
 }
 
 /**
@@ -83,6 +85,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
   private readonly credential: string;
   private readonly maxRequestsPerRun: number;
   private readonly maxRequestsPerHandle: number | undefined;
+  private readonly apiBase: string;
 
   constructor(options: DesearchPostsFetcherOptions) {
     const settings = options.settings ?? loadDesearchSettings();
@@ -105,6 +108,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
     this.maxRequestsPerHandle = resolveMaxRequestsPerHandleOverride(
       options.maxRequestsPerHandle,
     );
+    this.apiBase = options.apiBase ?? loadDesearchApiBase();
   }
 
   async fetchForHandles(
@@ -149,6 +153,7 @@ export class DesearchPostsFetcher implements PostsFetcher {
           {
             requestBudgetRemaining: allowance.allowed,
             lookbackCutoffMs,
+            apiBase: this.apiBase,
           },
         );
       } catch (err) {

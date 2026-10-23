@@ -1,4 +1,6 @@
 import { LLM_MAX_EXPLANATION_CHARS } from "../config/llmSettings.js";
+import { EMPTY_THINKING_BLOCK_WITH_NEWLINES } from "./modelCompletionText.js";
+import { getQwenTokenizerRuntime } from "./qwenTokenizerRuntime.js";
 
 /** Words allowed in one post-classification reason. */
 export const CLASSIFICATION_REASON_MAX_WORDS = 20;
@@ -25,7 +27,7 @@ const OUTPUT_ASSET_CLASSES = [
  * for this many posts. Each alias is cited once, in the outlook for its
  * own asset class. Reasons are at the character bound.
  */
-export function classificationOutputTokenCeiling(sentCount: number): number {
+export function classificationOutputJsonByteCeiling(sentCount: number): number {
   const count = sentCount < 1 ? 1 : sentCount;
   const reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS);
   const classCount = Math.min(count, OUTPUT_ASSET_CLASSES.length);
@@ -67,4 +69,19 @@ export function classificationOutputTokenCeiling(sentCount: number): number {
     assetOutlooks,
   };
   return Buffer.byteLength(JSON.stringify(payload), "utf8");
+}
+
+export function emptyThinkingBlockTokenCeiling(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return getQwenTokenizerRuntime(env).encode(EMPTY_THINKING_BLOCK_WITH_NEWLINES).length;
+}
+
+export function classificationOutputTokenCeiling(
+  sentCount: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return (
+    classificationOutputJsonByteCeiling(sentCount) + emptyThinkingBlockTokenCeiling(env)
+  );
 }

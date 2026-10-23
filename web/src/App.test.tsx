@@ -1,15 +1,12 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_QUESTION } from "../../src/config";
 import { App } from "./App";
 
 const metaBody = {
-  mode: "mock",
+  mode: "viewer",
   demo: true,
-  description: "Fixture posts and rule-based mock analysis only.",
-  postsSource: "fixtures",
-  analysisSource: "mock-rules",
+  description: "Saved report viewer only.",
   liveApiEnabled: false,
 };
 
@@ -20,16 +17,20 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-function installFetch(
-  onAnalyze: (init?: RequestInit) => Promise<Response> | Response,
-) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+function installFetch(reportBody?: unknown) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/meta")) {
       return jsonResponse(200, metaBody);
     }
     if (url.includes("/api/analyze")) {
-      return onAnalyze(init);
+      throw new Error("POST /api/analyze must not be called from the viewer");
+    }
+    if (url.includes("/api/reports") && !url.endsWith("/api/reports")) {
+      return jsonResponse(200, reportBody ?? {});
+    }
+    if (url.endsWith("/api/reports")) {
+      return jsonResponse(200, { reports: [] });
     }
     throw new Error(`unexpected fetch ${url}`);
   });
@@ -65,7 +66,6 @@ function successBody(
   extras: Record<string, unknown> = {},
 ) {
   return {
-    mode: "mock",
     question: DEFAULT_QUESTION,
     postsSource: "fixtures",
     analysisSource: "mock-rules",
@@ -76,8 +76,26 @@ function successBody(
     invalidHandles,
     fetchOutcomes,
     reports,
+    handleFailures: [],
     ...extras,
   };
+}
+
+async function uploadReport(body: unknown) {
+  render(<App />);
+  await screen.findByText(/Saved report viewer/);
+  const json = JSON.stringify(body);
+  const file = new File([json], "report.json", {
+    type: "application/json",
+  });
+  Object.defineProperty(file, "text", {
+    value: async () => json,
+  });
+  const input = document.getElementById("report-upload");
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error("report upload input missing");
+  }
+  fireEvent.change(input, { target: { files: [file] } });
 }
 
 beforeEach(() => {
@@ -90,112 +108,49 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("mock analyze form", () => {
-  it("starts from the documented question and shows a successful report", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(
-        200,
-        successBody(
-          [evidenceReport],
-          [{ status: "ok", handle: "bullmacro", posts: [], retrievalComplete: true }],
-        ),
+describe("report viewer", () => {
+  it("never calls POST /api/analyze", async () => {
+    const fetchMock = installFetch();
+    await uploadReport(
+      successBody(
+        [evidenceReport],
+        [{ status: "ok", handle: "bullmacro" }],
       ),
     );
-    render(<App />);
-
-    const question = await screen.findByLabelText("Question");
-    expect((question as HTMLTextAreaElement).value).toBe(DEFAULT_QUESTION);
-    expect(
-      screen.getByText(
-        "The mock analyzer uses fixed keyword rules. Changing the question does not change its analysis.",
-      ),
-    ).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-
-    const card = await screen.findByRole("article", { name: "@bullmacro" });
-    expect(card.textContent).toContain("Outlook: bullish");
-    expect(card.textContent).toContain(evidenceReport.explanation);
-    expect(card.textContent).toContain("Posts examined: 3");
-    expect(card.textContent).toContain(
-      "Date range of retrieved slice: 2026-09-18T09:30:00.000Z → 2026-09-20T14:00:00.000Z",
+    expect(await screen.findByText(/Outlook: bullish/)).toBeTruthy();
+    const analyzeCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/api/analyze"),
     );
-    expect(card.textContent).toContain("Retrieval coverage: complete");
-    expect(card.textContent).toContain("Fictional fixture link, not a live X link");
-    expect(card.textContent).toContain("Author: bullmacro");
-    expect(card.textContent).toContain("Timestamp: 2026-09-20T14:00:00.000Z");
-    expect(card.textContent).toContain("Post ID: b1");
-    expect(card.textContent).toContain("Kind: original");
-    expect(screen.getByRole("link", { name: evidenceReport.evidence[0]!.url }).getAttribute("href")).toBe(
-      evidenceReport.evidence[0]!.url,
-    );
-    expect(screen.getByText("Mode")).toBeTruthy();
-  });
-
-  it("keeps an unclear report and states missing evidence and dates", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(
-        200,
-        successBody([
-          {
-            handle: "unclearmacro",
-            outlook: "unclear",
-            explanation: "Insufficient original commentary.",
-            dateRangeExamined: null,
-            postsExamined: 3,
-            retrievalComplete: true,
-            evidence: [],
-            analysisSource: "mock",
-          },
-        ]),
-      ),
-    );
-    render(<App />);
-    await screen.findByRole("button", { name: "Analyze" });
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-
-    const card = await screen.findByRole("article", { name: "@unclearmacro" });
-    expect(card.textContent).toContain("Outlook: unclear");
-    expect(card.textContent).toContain("No supporting evidence in the examined slice.");
-    expect(card.textContent).toContain("No date range was returned for this report.");
+    expect(analyzeCalls).toHaveLength(0);
   });
 
   it("shows status lines without outlook cards, and does not repeat an invalid handle", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(
-        200,
-        successBody(
-          [],
-          [
-            {
-              status: "invalid_handle",
-              handle: "bad handle",
-              reason: "handle must contain only letters, numbers, and underscore",
-            },
-            { status: "unknown_handle", handle: "notahandle" },
-            { status: "empty", handle: "emptymacro" },
-            {
-              status: "incomplete",
-              handle: "bearmacro",
-              reason: "total_post_limit_reached",
-            },
-          ],
-          [
-            {
-              raw: "bad handle",
-              reason: "handle must contain only letters, numbers, and underscore",
-            },
-          ],
-        ),
+    installFetch();
+    await uploadReport(
+      successBody(
+        [],
+        [
+          {
+            status: "invalid_handle",
+            handle: "bad handle",
+            reason: "handle must contain only letters, numbers, and underscore",
+          },
+          { status: "unknown_handle", handle: "notahandle" },
+          { status: "empty", handle: "emptymacro" },
+          {
+            status: "incomplete",
+            handle: "bearmacro",
+            reason: "total_post_limit_reached",
+          },
+        ],
+        [
+          {
+            raw: "bad handle",
+            reason: "handle must contain only letters, numbers, and underscore",
+          },
+        ],
       ),
     );
-    render(<App />);
-    await screen.findByRole("button", { name: "Analyze" });
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-
     expect(
       await screen.findByText(
         'Invalid handle "bad handle": handle must contain only letters, numbers, and underscore',
@@ -215,62 +170,49 @@ describe("mock analyze form", () => {
   });
 
   it("labels partial retrieval on the report card", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(
-        200,
-        successBody([
-          {
-            ...evidenceReport,
-            retrievalComplete: false,
-            retrievalIncompleteReason: "per_person_limit_reached",
-            postsExamined: 1,
-          },
-        ]),
-      ),
+    installFetch();
+    await uploadReport(
+      successBody([
+        {
+          ...evidenceReport,
+          retrievalComplete: false,
+          retrievalIncompleteReason: "per_person_limit_reached",
+          postsExamined: 1,
+        },
+      ]),
     );
-    render(<App />);
-    await screen.findByRole("button", { name: "Analyze" });
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-
-    const card = await screen.findByRole("article", { name: "@bullmacro" });
+    const card = await screen.findByRole("article");
     expect(card.textContent).toContain("Partial retrieval: per_person_limit_reached");
     expect(card.textContent).toContain("Outlook: bullish");
   });
 
   it("shows sent excerpts, quoted text, and a stale relevant post", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(
-        200,
-        successBody([
-          {
-            ...evidenceReport,
-            eligiblePostCount: 2,
-            relevantPostCount: 1,
-            newestRelevantPostAt: "2026-09-01T00:00:00.000Z",
-            viewMayBeStale: true,
-            fetchStopReason: "lookback_window_reached",
-            analysisInput: [
-              {
-                postId: "q1",
-                timestamp: "2026-09-01T00:00:00.000Z",
-                disposition: "sent",
-                reason: "quote_commentary",
-                originalChars: 120,
-                sentChars: 120,
-                sentExcerpt: "Duration still looks attractive if growth cools.",
-                quotedPostExcerpt: "Quoted account says something else entirely.",
-              },
-            ],
-          },
-        ]),
-      ),
+    installFetch();
+    await uploadReport(
+      successBody([
+        {
+          ...evidenceReport,
+          eligiblePostCount: 2,
+          relevantPostCount: 1,
+          newestRelevantPostAt: "2026-09-01T00:00:00.000Z",
+          viewMayBeStale: true,
+          fetchStopReason: "lookback_window_reached",
+          analysisInput: [
+            {
+              postId: "q1",
+              timestamp: "2026-09-01T00:00:00.000Z",
+              disposition: "sent",
+              reason: "quote_commentary",
+              originalChars: 120,
+              sentChars: 120,
+              sentExcerpt: "Duration still looks attractive if growth cools.",
+              quotedPostExcerpt: "Quoted account says something else entirely.",
+            },
+          ],
+        },
+      ]),
     );
-    render(<App />);
-    await screen.findByRole("button", { name: "Analyze" });
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-    const card = await screen.findByRole("article", { name: "@bullmacro" });
+    const card = await screen.findByRole("article");
     expect(card.textContent).toContain("Relevant posts: 1 of 2 eligible");
     expect(card.textContent).toContain("Newest relevant post: 2026-09-01T00:00:00.000Z");
     expect(card.textContent).toContain(
@@ -281,94 +223,6 @@ describe("mock analyze form", () => {
     expect(card.textContent).toContain(
       "Quoted post text: Quoted account says something else entirely.",
     );
-  });
-
-  it("sends one analyze request while a submission is pending", async () => {
-    const user = userEvent.setup();
-    let release: (response: Response) => void = () => {};
-    const pending = new Promise<Response>((resolve) => {
-      release = resolve;
-    });
-    const fetchMock = installFetch(() => pending);
-    render(<App />);
-    const button = await screen.findByRole("button", { name: "Analyze" });
-    await user.click(button);
-    const results = screen.getByRole("region", { name: "Analysis results" });
-    expect(results.textContent).toContain("Analyzing…");
-    expect(button.hasAttribute("disabled")).toBe(true);
-    await user.click(button);
-    const analyzeCalls = fetchMock.mock.calls.filter((call) =>
-      String(call[0]).includes("/api/analyze"),
-    );
-    expect(analyzeCalls).toHaveLength(1);
-    expect(screen.queryByRole("article")).toBeNull();
-    release(jsonResponse(200, successBody([evidenceReport])));
-    expect(await screen.findByRole("article", { name: "@bullmacro" })).toBeTruthy();
-  });
-
-  it("clears a previous report when a later request returns an HTTP error", async () => {
-    const user = userEvent.setup();
-    let calls = 0;
-    installFetch(() => {
-      calls += 1;
-      if (calls === 1) return jsonResponse(200, successBody([evidenceReport]));
-      return jsonResponse(400, { error: "Question is required and cannot be empty" });
-    });
-    render(<App />);
-    const button = await screen.findByRole("button", { name: "Analyze" });
-    await user.click(button);
-    expect(await screen.findByRole("article", { name: "@bullmacro" })).toBeTruthy();
-
-    await user.clear(screen.getByLabelText("Question"));
-    await user.click(button);
-    expect(
-      await screen.findByRole("alert"),
-    ).toHaveProperty("textContent", "Question is required and cannot be empty");
-    expect(screen.queryByRole("article")).toBeNull();
-  });
-
-  it("clears a previous report when the network request is rejected", async () => {
-    const user = userEvent.setup();
-    let calls = 0;
-    installFetch(() => {
-      calls += 1;
-      if (calls === 1) return jsonResponse(200, successBody([evidenceReport]));
-      return Promise.reject(new TypeError("Failed to fetch"));
-    });
-    render(<App />);
-    const button = await screen.findByRole("button", { name: "Analyze" });
-    await user.click(button);
-    expect(await screen.findByRole("article", { name: "@bullmacro" })).toBeTruthy();
-    await user.click(button);
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByText("Could not reach the local API")).toBeTruthy();
-    expect(screen.queryByRole("article")).toBeNull();
-  });
-
-  it("posts the edited handles and question as JSON", async () => {
-    const user = userEvent.setup();
-    const fetchMock = installFetch(() => jsonResponse(200, successBody([evidenceReport])));
-    render(<App />);
-    const handles = await screen.findByLabelText("Handles");
-    const question = screen.getByLabelText("Question");
-    await user.clear(handles);
-    await user.type(handles, "editedmacro");
-    await user.clear(question);
-    await user.type(question, "Edited question");
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-    await screen.findByRole("article", { name: "@bullmacro" });
-
-    const analyzeCalls = fetchMock.mock.calls.filter((call) =>
-      String(call[0]).includes("/api/analyze"),
-    );
-    expect(analyzeCalls).toHaveLength(1);
-    const init = analyzeCalls[0]?.[1];
-    expect(init?.method).toBe("POST");
-    expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
-    expect(JSON.parse(String(init?.body))).toEqual({
-      handles: "editedmacro",
-      question: "Edited question",
-    });
   });
 
   it.each([
@@ -382,148 +236,70 @@ describe("mock analyze form", () => {
     ],
     ["malformed date range", { ...evidenceReport, dateRangeExamined: { from: 1 } }],
     ["non-boolean retrieval flag", { ...evidenceReport, retrievalComplete: "yes" }],
-  ])("rejects a success response with a %s", async (_label, report) => {
-    const user = userEvent.setup();
-    installFetch(() => jsonResponse(200, successBody([report])));
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Analyze" }));
+  ])("rejects an uploaded report with a %s", async (_label, report) => {
+    installFetch();
+    await uploadReport(successBody([report]));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      "API returned an unexpected response",
+      "The selected file is not a saved report",
     );
     expect(screen.queryByRole("article")).toBeNull();
   });
 
   it("rejects an unknown outcome status instead of showing an unexamined line", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(
-        200,
-        successBody([evidenceReport], [{ status: "banned", handle: "someone" }]),
-      ),
+    installFetch();
+    await uploadReport(
+      successBody([evidenceReport], [{ status: "banned", handle: "someone" }]),
     );
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Analyze" }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      "API returned an unexpected response",
+      "The selected file is not a saved report",
     );
     expect(screen.queryByRole("article")).toBeNull();
     expect(screen.queryByText(/was not examined/)).toBeNull();
   });
 
-  it("rejects the whole success response when one invalid-handle entry is malformed", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(200, successBody([evidenceReport], [], [{ raw: "bad handle" }])),
-    );
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Analyze" }));
+  it("rejects the whole upload when one invalid-handle entry is malformed", async () => {
+    installFetch();
+    await uploadReport(successBody([evidenceReport], [], [{ raw: "bad handle" }]));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      "API returned an unexpected response",
+      "The selected file is not a saved report",
     );
     expect(screen.queryByRole("article")).toBeNull();
     expect(screen.queryByText(/bad handle/)).toBeNull();
   });
 
-  it("labels retrieved posts without the fixture warning and shows reuse", async () => {
-    const user = userEvent.setup();
-    let calls = 0;
-    installFetch(() => {
-      calls += 1;
-      return jsonResponse(
-        200,
-        successBody(
-          [
-            {
-              ...evidenceReport,
-              evidence: [
-                {
-                  ...evidenceReport.evidence[0],
-                  url: "https://x.com/example/status/1",
-                },
-              ],
-              analysisInput: [
-                {
-                  postId: "b3",
-                  disposition: "excluded",
-                  reason: "quote_without_analyst_commentary",
-                  originalChars: 0,
-                  sentChars: 0,
-                },
-              ],
-              providerUsage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
-              modelInvoked: true,
-            },
-          ],
-          [],
-          [],
+  it("shows handleFailures with local estimate and provider usage kept separate", async () => {
+    installFetch();
+    await uploadReport(
+      successBody([], [{ status: "ok", handle: "bullmacro" }], [], {
+        handleFailures: [
           {
-            postsSource: "desearch",
-            analysisSource: "chutes",
-            reused: calls > 1,
-            billing: [{ usageCount: 10 }],
+            handle: "bullmacro",
+            message: "Chutes refused the request",
+            budgetEstimate: { estimatedUsd: 0.012345 },
+            providerUsage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
           },
-        ),
-      );
-    });
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Analyze" }));
-    const card = await screen.findByRole("article", { name: "@bullmacro" });
-    expect(card.textContent).toContain("Retrieved post link");
-    expect(card.textContent).not.toContain("Fictional fixture link");
-    expect(card.textContent).toContain("quote_without_analyst_commentary");
-    expect(card.textContent).toContain("prompt_tokens=5");
-    expect(screen.getByText(/Fetched a new slice/)).toBeTruthy();
-    expect(screen.getByText(/Desearch usage count 10/)).toBeTruthy();
-    expect(screen.queryByText(/Desearch reported cost/)).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-    expect(await screen.findByText(/Reused an earlier slice/)).toBeTruthy();
-  });
-
-  it("sends fresh only when the new-slice control is checked", async () => {
-    const user = userEvent.setup();
-    const fetchMock = installFetch(() => jsonResponse(200, successBody([evidenceReport])));
-    render(<App />);
-    await user.click(await screen.findByRole("checkbox", { name: "Fetch a new slice" }));
-    await user.click(screen.getByRole("button", { name: "Analyze" }));
-    await screen.findByRole("article", { name: "@bullmacro" });
-    const analyzeCalls = fetchMock.mock.calls.filter((call) =>
-      String(call[0]).includes("/api/analyze"),
-    );
-    expect(JSON.parse(String(analyzeCalls[0]?.[1]?.body))).toMatchObject({ fresh: true });
-  });
-
-  it("shows billing and every model usage on a failed run without an outlook card", async () => {
-    const user = userEvent.setup();
-    installFetch(() =>
-      jsonResponse(502, {
-        error: "Chutes refused the request",
-        postsSource: "desearch",
-        analysisSource: "chutes",
-        referenceDate: "2026-11-02",
-        fetchedAt: "2026-11-02T12:00:00.000Z",
-        reused: false,
-        sliceStored: true,
-        billing: [{ usageCount: 3 }, { usageCount: 4 }],
-        providerUsages: [
-          { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
-          { promptTokens: 9, completionTokens: 1, totalTokens: 10 },
         ],
       }),
     );
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Analyze" }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("Chutes refused the request");
-    expect(screen.getByText("The run failed. No complete report was produced.")).toBeTruthy();
-    expect(screen.getByText(/prompt_tokens=11/)).toBeTruthy();
-    expect(screen.getByText(/prompt_tokens=9/)).toBeTruthy();
-    expect(screen.getByText(/Desearch usage count 3/)).toBeTruthy();
-    expect(screen.getByText(/Desearch usage count 4/)).toBeTruthy();
-    expect(screen.getByText(/Fetched a new slice/)).toBeTruthy();
+    expect(await screen.findByText(/Local estimate \$0.012345 \(not provider usage\)/)).toBeTruthy();
+    expect(screen.getByText(/Provider usage prompt_tokens=11/)).toBeTruthy();
     expect(screen.queryByRole("article")).toBeNull();
+  });
+
+  it("shows billing lines on a saved report", async () => {
+    installFetch();
+    await uploadReport(
+      successBody([evidenceReport], [{ status: "ok", handle: "bullmacro" }], [], {
+        postsSource: "desearch",
+        analysisSource: "chutes",
+        billing: [{ usageCount: 10 }, { costUsd: 0.02, usageCount: 3 }],
+      }),
+    );
+    expect(await screen.findByText(/Desearch usage count 10/)).toBeTruthy();
+    expect(screen.getByText(/Desearch reported cost USD 0.02/)).toBeTruthy();
+    expect(screen.getByText(/Desearch usage count 3/)).toBeTruthy();
   });
 });

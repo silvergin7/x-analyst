@@ -125,6 +125,7 @@ describe("parseCliArgs", () => {
         "What is each analyst's current market outlook?",
         "--as-of",
         "2026-10-10",
+        "--offline",
       ],
       {
         encoding: "utf8",

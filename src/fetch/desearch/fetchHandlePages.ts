@@ -59,6 +59,7 @@ export async function fetchHandlePages(
   options: {
     requestBudgetRemaining: number;
     lookbackCutoffMs: number;
+    apiBase?: string;
   },
 ): Promise<FetchHandlePagesResult> {
   const collected: Post[] = [];
@@ -87,7 +88,12 @@ export async function fetchHandlePages(
       break;
     }
 
-    const request = buildTwitterUserPostsRequest(username, apiKey, cursor);
+    const request = buildTwitterUserPostsRequest(
+      username,
+      apiKey,
+      cursor,
+      options.apiBase,
+    );
     let response: Awaited<ReturnType<DesearchTransport["execute"]>>;
     try {
       response = await transport.execute(request);

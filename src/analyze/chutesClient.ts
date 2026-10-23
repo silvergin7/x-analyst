@@ -1,5 +1,4 @@
 import {
-  CHUTES_CHAT_COMPLETIONS_URL,
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
   LLM_CONTEXT_WINDOW_TOKENS,
@@ -8,6 +7,7 @@ import {
   type LlmRuntimeConfig,
 } from "../config/llmSettings.js";
 import type { BudgetEstimate, ProviderTokenUsage } from "../types.js";
+import { stripLeadingEmptyThinkingBlock } from "./modelCompletionText.js";
 import {
   buildChutesRequestBody,
   estimateRequestBudget,
@@ -150,8 +150,20 @@ function readCompletionContent(payload: unknown, estimate: BudgetEstimate): {
   if (finishReason !== "stop") {
     failWithUsage("invalid_output", "Chutes returned an unexpected finish_reason", usage, estimate);
   }
-  const content = messageRecord?.content;
-  if (typeof content !== "string" || content.trim() === "") {
+  const rawContent = messageRecord?.content;
+  if (typeof rawContent !== "string" || rawContent.trim() === "") {
+    failWithUsage("invalid_output", "Chutes returned no message content", usage, estimate);
+  }
+  let content: string;
+  try {
+    content = stripLeadingEmptyThinkingBlock(rawContent);
+  } catch (err) {
+    if (err instanceof Error) {
+      failWithUsage("invalid_output", err.message, usage, estimate);
+    }
+    throw err;
+  }
+  if (content.trim() === "") {
     failWithUsage("invalid_output", "Chutes returned no message content", usage, estimate);
   }
   return { content, usage };
@@ -198,7 +210,7 @@ export async function requestChutesCompletion(
   const signal = AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS);
   let response: ChutesTransportResponse;
   try {
-    response = await transport.post(CHUTES_CHAT_COMPLETIONS_URL, {
+    response = await transport.post(config.chatCompletionsUrl, {
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",

@@ -10,6 +10,6 @@ const server = createServer((req, res) => {
 server.listen(port, "127.0.0.1", () => {
   const meta = buildMetaResponse();
   process.stdout.write(
-    `API listening on http://127.0.0.1:${port} (posts: ${meta.postsSource}, analysis: ${meta.analysisSource})\n`,
+    `API listening on http://127.0.0.1:${port} (${meta.mode}; live API disabled)\n`,
   );
 });
