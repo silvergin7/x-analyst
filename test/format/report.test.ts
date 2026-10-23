@@ -130,6 +130,7 @@ describe("formatFullReport source labels", () => {
     assert.match(withCommit, /Slice: replayed/);
     assert.match(withCommit, /Fetched commit: d{40}/);
     assert.match(text, /usage_count=2/);
+    assert.match(text, /list_price_usd=0.0003/);
     assert.doesNotMatch(text, /synthetic fixture/);
     assert.doesNotMatch(text, /Fictional/);
     assert.doesNotMatch(text, /cost_usd/);

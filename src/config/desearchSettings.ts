@@ -3,6 +3,14 @@ export const DESEARCH_PLACEHOLDER_KEY = "replace_me_only_when_you_are_ready";
 
 const DEFAULT_MAX_REQUESTS_PER_RUN = 5;
 
+/** Published Desearch list price, USD per 1,000 posts. Not a provider-reported charge. */
+export const DESEARCH_USD_PER_THOUSAND_POSTS = 0.15;
+
+/** List price for a usage count. Separate from cost_usd returned by Desearch. */
+export function desearchListPriceUsd(usageCount: number): number {
+  return (usageCount / 1000) * DESEARCH_USD_PER_THOUSAND_POSTS;
+}
+
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const trimmed = value.trim();

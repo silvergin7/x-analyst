@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   DESEARCH_PLACEHOLDER_KEY,
+  DESEARCH_USD_PER_THOUSAND_POSTS,
+  desearchListPriceUsd,
   loadDesearchMaxRequestsPerHandle,
   loadDesearchRequestBudget,
   loadDesearchSettings,
@@ -156,5 +158,13 @@ describe("resolveDesearchApiKey", () => {
     process.env.DESEARCH_API_KEY = FAKE_KEY;
     const key = resolveDesearchApiKey();
     assert.ok(key && key.length > 0);
+  });
+});
+
+describe("desearchListPriceUsd", () => {
+  it("prices one thousand posts at the published list price", () => {
+    assert.equal(DESEARCH_USD_PER_THOUSAND_POSTS, 0.15);
+    assert.equal(desearchListPriceUsd(1000), 0.15);
+    assert.equal(desearchListPriceUsd(0), 0);
   });
 });

@@ -1,4 +1,5 @@
 import { UNCLASSIFIED_BY_MODEL_REASON } from "../analyze/classification.js";
+import { desearchListPriceUsd } from "../config/desearchSettings.js";
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
 import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.js";
 import { formatBudgetEstimate, formatProviderUsage } from "./llmFixtureReport.js";
@@ -199,7 +200,10 @@ export interface ReportRunContext {
 function formatBilling(item: DesearchBilling): string {
   const parts: string[] = [];
   if (item.costUsd !== undefined) parts.push(`cost_usd=${item.costUsd}`);
-  if (item.usageCount !== undefined) parts.push(`usage_count=${item.usageCount}`);
+  if (item.usageCount !== undefined) {
+    parts.push(`usage_count=${item.usageCount}`);
+    parts.push(`list_price_usd=${desearchListPriceUsd(item.usageCount)}`);
+  }
   if (item.service !== undefined) parts.push(`service=${item.service}`);
   if (item.currency !== undefined) parts.push(`currency=${item.currency}`);
   return parts.join(" ");
