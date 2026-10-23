@@ -50,14 +50,14 @@ export function chutesWorstCaseEstimateUsd(input: {
   let total = 0;
   for (const handle of input.handles) {
     const modestUsd = chutesEstimateForPosts({
-      posts: modestPreflightPosts(input.maxRetrievedPostsPerHandle),
+      posts: modestPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
       handle,
       question: input.question,
       referenceDate: input.referenceDate,
       env: input.env,
     });
     const longUsd = chutesEstimateForPosts({
-      posts: longPreflightPosts(input.maxRetrievedPostsPerHandle),
+      posts: longPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
       handle,
       question: input.question,
       referenceDate: input.referenceDate,
