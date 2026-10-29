@@ -41,7 +41,18 @@ function mockRunEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 function withSliceDir(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...env, X_ANALYST_SLICE_DIR: testSliceDir };
+  const statePath = process.env.X_ANALYST_MODEL_STATE_PATH;
+  const tokenizerCacheDir = process.env.X_ANALYST_TOKENIZER_CACHE_DIR;
+  return {
+    ...(typeof statePath === "string" && statePath.trim() !== ""
+      ? { X_ANALYST_MODEL_STATE_PATH: statePath }
+      : {}),
+    ...(typeof tokenizerCacheDir === "string" && tokenizerCacheDir.trim() !== ""
+      ? { X_ANALYST_TOKENIZER_CACHE_DIR: tokenizerCacheDir }
+      : {}),
+    ...env,
+    X_ANALYST_SLICE_DIR: testSliceDir,
+  };
 }
 
 function tweet(id: string, quote: boolean, username = "bullmacro") {

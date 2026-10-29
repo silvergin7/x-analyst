@@ -1,42 +1,39 @@
-import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { listNestedFiles, listTopLevelFiles } from "./support/dataDirListing.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
-if (process.env.X_ANALYST_SLICE_DIR?.trim() === "") {
-  delete process.env.X_ANALYST_SLICE_DIR;
-}
-if (process.env.X_ANALYST_REPORTS_DIR?.trim() === "") {
-  delete process.env.X_ANALYST_REPORTS_DIR;
-}
-if (!process.env.X_ANALYST_SLICE_DIR) {
-  process.env.X_ANALYST_SLICE_DIR = mkdtempSync(path.join(tmpdir(), "x-analyst-test-slices-"));
-}
-if (!process.env.X_ANALYST_REPORTS_DIR) {
-  process.env.X_ANALYST_REPORTS_DIR = mkdtempSync(path.join(tmpdir(), "x-analyst-test-reports-"));
-}
-const snapshotPath = path.join(repoRoot, ".test-data-dir-snapshot.json");
-
-function listDir(relative: string): Record<string, number> {
-  const dir = path.join(repoRoot, relative);
-  mkdirSync(dir, { recursive: true });
-  const out: Record<string, number> = {};
-  for (const name of readdirSync(dir)) {
-    const filePath = path.join(dir, name);
-    const stat = statSync(filePath);
-    if (!stat.isFile()) continue;
-    out[name] = stat.size;
+function useTempDir(name: string, prefix: string): void {
+  if (process.env[name]?.trim() === "") delete process.env[name];
+  if (!process.env[name]) {
+    process.env[name] = mkdtempSync(path.join(tmpdir(), prefix));
   }
-  return out;
 }
+
+useTempDir("X_ANALYST_SLICE_DIR", "x-analyst-test-slices-");
+useTempDir("X_ANALYST_REPORTS_DIR", "x-analyst-test-reports-");
+useTempDir("X_ANALYST_TOKENIZER_CACHE_DIR", "x-analyst-test-tokenizers-");
+
+if (process.env.X_ANALYST_MODEL_STATE_PATH?.trim() === "") {
+  delete process.env.X_ANALYST_MODEL_STATE_PATH;
+}
+if (!process.env.X_ANALYST_MODEL_STATE_PATH) {
+  const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-test-model-state-"));
+  process.env.X_ANALYST_MODEL_STATE_PATH = path.join(dir, "state.json");
+}
+
+const snapshotPath = path.join(repoRoot, ".test-data-dir-snapshot.json");
 
 writeFileSync(
   snapshotPath,
   JSON.stringify(
     {
-      slices: listDir("data/slices"),
-      reports: listDir("data/reports"),
+      slices: listTopLevelFiles(path.join(repoRoot, "data/slices")),
+      reports: listTopLevelFiles(path.join(repoRoot, "data/reports")),
+      models: listNestedFiles(path.join(repoRoot, "data/models")),
+      tokenizers: listNestedFiles(path.join(repoRoot, "data/tokenizers")),
     },
     null,
     2,
@@ -50,6 +47,8 @@ writeFileSync(
     {
       X_ANALYST_SLICE_DIR: process.env.X_ANALYST_SLICE_DIR,
       X_ANALYST_REPORTS_DIR: process.env.X_ANALYST_REPORTS_DIR,
+      X_ANALYST_MODEL_STATE_PATH: process.env.X_ANALYST_MODEL_STATE_PATH,
+      X_ANALYST_TOKENIZER_CACHE_DIR: process.env.X_ANALYST_TOKENIZER_CACHE_DIR,
     },
     null,
     2,
