@@ -4,7 +4,6 @@ import path from "node:path";
 import { parseCliArgs } from "./cliArgs.js";
 import { AnalystListError, analystHandlesFromList, loadAnalystList } from "./config/analystList.js";
 import {
-  loadLlmRuntimeConfig,
   readInputMaxCharsStrict,
   utcReferenceDate,
 } from "./config/llmSettings.js";
@@ -20,7 +19,6 @@ import {
 } from "./analyze/buildChutesModelPlanForRun.js";
 import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
 import { forbiddenTestFixtureEnvMessage } from "./analyze/testFixtureEnvGuard.js";
-import { applyChutesModelToEnv } from "./config/llmSettings.js";
 import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import { validateLiveDesearchRequestLimits } from "./config/desearchSettings.js";
 import { serializeRunReportResult } from "./format/runReportJson.js";
@@ -134,6 +132,10 @@ async function main(): Promise<void> {
   const question = options.questionFlagSeen ? options.question : DEFAULT_QUESTION;
 
   let chutesModelPlan: ChutesModelPlan | undefined;
+  const ownerForcedModelId = (() => {
+    const raw = runEnv.LLM_MODEL?.trim();
+    return raw === undefined || raw === "" ? undefined : raw;
+  })();
 
   if (!options.offline) {
     const fixtureMessage = forbiddenTestFixtureEnvMessage(runEnv);
@@ -172,8 +174,8 @@ async function main(): Promise<void> {
         catalogTransport: transportDeps.catalogTransport ?? createFetchChutesCatalogTransport(),
         hfTransport: transportDeps.hfTransport ?? createHuggingFaceModelInfoTransport(),
         hfDownloadTransport: transportDeps.hfDownloadTransport,
+        ownerForcedModelId,
       });
-      applyChutesModelToEnv(runEnv, chutesModelPlan.primary.model);
     } catch (err) {
       const message =
         err instanceof ChutesPreflightPlanError ? err.message : "Chutes preflight failed";
@@ -182,8 +184,6 @@ async function main(): Promise<void> {
       return;
     }
   }
-
-  const llm = loadLlmRuntimeConfig(runEnv);
 
   const inputMaxChars = readInputMaxCharsStrict(runEnv);
   if (!inputMaxChars.ok) {
@@ -260,6 +260,7 @@ async function main(): Promise<void> {
         replayPath: options.replayPath,
         env: runEnv,
         chutesModelPlan,
+        ownerForcedModelId,
         onEstimate: (estimate) => {
           process.stdout.write(`${formatBudgetEstimate(estimate)}\n`);
         },

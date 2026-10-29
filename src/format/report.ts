@@ -170,6 +170,12 @@ export function formatPersonReport(report: PersonOutlookReport): string {
       lines.push(`      Cited relevant posts: ${cited === "" ? "none" : cited}`);
     }
   }
+  if (report.llmModelAttempts !== undefined && report.llmModelAttempts.length > 0) {
+    const parts = report.llmModelAttempts.map((item) =>
+      item.kind === "skipped" ? `${item.modelId} (skipped)` : item.modelId,
+    );
+    lines.push(`  Chutes models: ${parts.join(", ")}`);
+  }
   if (report.fetchStopReason) {
     lines.push(`  Fetch stopped: ${FETCH_STOP_LABEL[report.fetchStopReason]}`);
   }
@@ -335,6 +341,12 @@ export function formatFullReport(
     parts.push("");
     for (const failure of handleFailures) {
       parts.push(`@${failure.handle}: ${failure.message}`);
+      if (failure.llmModelAttempts !== undefined && failure.llmModelAttempts.length > 0) {
+        const models = failure.llmModelAttempts.map((item) =>
+          item.kind === "skipped" ? `${item.modelId} (skipped)` : item.modelId,
+        );
+        parts.push(`  Chutes models: ${models.join(", ")}`);
+      }
       if (failure.budgetEstimate) parts.push(formatBudgetEstimate(failure.budgetEstimate));
       if (failure.providerUsage) parts.push(formatProviderUsage(failure.providerUsage));
     }

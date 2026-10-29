@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   CHUTES_CATALOG_MAX_BYTES,
   CHUTES_CATALOG_TIMEOUT_MS,
@@ -133,16 +132,7 @@ export function chutesModelsListUrl(env: NodeJS.ProcessEnv = process.env): strin
 export async function fetchChutesModelCatalog(
   url: string,
   transport: ChutesCatalogTransport,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<ParsedChutesCatalog> {
-  const fixturePath = env.CHUTES_CATALOG_FIXTURE_PATH?.trim();
-  if (fixturePath !== undefined && fixturePath !== "") {
-    const bodyText = readFileSync(fixturePath, "utf8");
-    if (Buffer.byteLength(bodyText, "utf8") > CHUTES_CATALOG_MAX_BYTES) {
-      throw new ChutesCatalogError("Chutes model catalog response exceeded the size cap");
-    }
-    return parseChutesCatalogBody(bodyText);
-  }
   if (url.length > CHUTES_CATALOG_MAX_BYTES) {
     throw new ChutesCatalogError("Chutes model catalog URL is too long");
   }

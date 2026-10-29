@@ -9,6 +9,7 @@ import { worstCaseHandleCeilings } from "./chutesPreflightCeilings.js";
 import {
   buildChutesModelPlan,
   ChutesModelSelectionError,
+  withPrimaryModelAtRank,
   type ChutesModelPlan,
 } from "./chutesModelSelection.js";
 import { catalogEntryEligible, worstCaseCostUsd } from "./chutesModelEligibility.js";
@@ -88,6 +89,7 @@ export async function buildChutesModelPlanForRun(input: {
   hfTransport: HuggingFaceModelInfoTransport;
   hfDownloadTransport?: HuggingFaceDownloadTransport;
   excludeModelIds?: readonly string[];
+  ownerForcedModelId?: string;
 }): Promise<ChutesModelPlan> {
   let catalog;
   try {
@@ -100,8 +102,8 @@ export async function buildChutesModelPlanForRun(input: {
       err instanceof ChutesCatalogError ? err.message : "Chutes model catalog request failed";
     throw new ChutesPreflightPlanError(message);
   }
-  const forcedModel = input.env.LLM_MODEL?.trim();
-  const refModel = catalog.models[0]?.id ?? forcedModel ?? "unknown/model";
+  const ownerForcedModelId = input.ownerForcedModelId?.trim();
+  const refModel = catalog.models[0]?.id ?? ownerForcedModelId ?? "unknown/model";
   const maxPosts = maxPostsPerHandle(input.env, input.replay);
   const bootstrapCeilings = computeCeilings({
     handles: input.handles,
@@ -121,7 +123,10 @@ export async function buildChutesModelPlanForRun(input: {
       ceilings: bootstrapCeilings,
       env: input.env,
       hfTransport: input.hfTransport,
-      forcedModelId: forcedModel === "" ? undefined : forcedModel,
+      forcedModelId:
+        ownerForcedModelId === undefined || ownerForcedModelId === ""
+          ? undefined
+          : ownerForcedModelId,
       excludeModelIds: input.excludeModelIds,
     });
   } catch (err) {
@@ -156,15 +161,22 @@ export async function buildChutesModelPlanForRun(input: {
     }
     applyTokenizerPinToEnv(input.env, loaded.tokenizerJsonPath, loaded.meta);
     try {
-      return await buildChutesModelPlan({
+      const plan = await buildChutesModelPlan({
         catalogModels: catalog.models,
         skippedCatalogEntries: catalog.skippedEntryCount,
         ceilings,
         env: input.env,
         hfTransport: input.hfTransport,
-        forcedModelId: model.id,
+        forcedModelId:
+          ownerForcedModelId === undefined || ownerForcedModelId === ""
+            ? undefined
+            : ownerForcedModelId,
         excludeModelIds: input.excludeModelIds,
       });
+      if (ownerForcedModelId === undefined || ownerForcedModelId === "") {
+        return withPrimaryModelAtRank(plan, model.id);
+      }
+      return plan;
     } catch (err) {
       const message =
         err instanceof ChutesModelSelectionError ? err.message : "Chutes model selection failed";

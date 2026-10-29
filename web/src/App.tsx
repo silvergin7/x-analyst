@@ -77,6 +77,10 @@ interface OutlookReport {
   analysisInput?: AnalysisInputItem[];
   providerUsage?: ProviderUsage | null;
   modelInvoked?: boolean;
+  llmModel?: string;
+  llmModelsTried?: string[];
+  llmModelAttempts?: Array<{ modelId: string; kind: "sent" | "skipped" }>;
+  tokenizerPin?: { root: string; commit: string; sha256: string };
   eligiblePostCount?: number;
   relevantPostCount?: number;
   newestRelevantPostAt?: string;
@@ -402,6 +406,36 @@ function readReport(value: unknown): OutlookReport | null {
     analysisInput,
     providerUsage,
     modelInvoked: typeof value.modelInvoked === "boolean" ? value.modelInvoked : undefined,
+    ...(isNonEmptyString(value.llmModel) ? { llmModel: value.llmModel } : {}),
+    ...(Array.isArray(value.llmModelsTried) &&
+    value.llmModelsTried.every((item) => typeof item === "string")
+      ? { llmModelsTried: value.llmModelsTried as string[] }
+      : {}),
+    ...(Array.isArray(value.llmModelAttempts) &&
+    value.llmModelAttempts.every(
+      (item) =>
+        item !== null &&
+        typeof item === "object" &&
+        isNonEmptyString((item as { modelId?: string }).modelId) &&
+        ((item as { kind?: string }).kind === "sent" ||
+          (item as { kind?: string }).kind === "skipped"),
+    )
+      ? {
+          llmModelAttempts: value.llmModelAttempts as Array<{
+            modelId: string;
+            kind: "sent" | "skipped";
+          }>,
+        }
+      : {}),
+    ...(value.tokenizerPin &&
+    typeof value.tokenizerPin === "object" &&
+    isNonEmptyString((value.tokenizerPin as { root?: string }).root) &&
+    isNonEmptyString((value.tokenizerPin as { commit?: string }).commit) &&
+    isNonEmptyString((value.tokenizerPin as { sha256?: string }).sha256)
+      ? {
+          tokenizerPin: value.tokenizerPin as { root: string; commit: string; sha256: string },
+        }
+      : {}),
     ...(isCount(value.eligiblePostCount) ? { eligiblePostCount: value.eligiblePostCount } : {}),
     ...(isCount(value.relevantPostCount) ? { relevantPostCount: value.relevantPostCount } : {}),
     ...(isNonEmptyString(value.newestRelevantPostAt)
@@ -825,6 +859,26 @@ function ReportCard({
             ))}
           </ul>
         </>
+      )}
+      {report.llmModel && <p>Chutes model: {report.llmModel}</p>}
+      {report.llmModelAttempts && report.llmModelAttempts.length > 0 && (
+        <p>
+          Chutes models:{" "}
+          {report.llmModelAttempts
+            .map((item) => (item.kind === "skipped" ? `${item.modelId} (skipped)` : item.modelId))
+            .join(", ")}
+        </p>
+      )}
+      {!report.llmModelAttempts &&
+        report.llmModelsTried &&
+        report.llmModelsTried.length > 1 && (
+          <p>Models tried: {report.llmModelsTried.join(", ")}</p>
+        )}
+      {report.tokenizerPin && (
+        <p>
+          Tokenizer pin: {report.tokenizerPin.root}@{report.tokenizerPin.commit.slice(0, 8)}… (
+          {report.tokenizerPin.sha256.slice(0, 12)}…)
+        </p>
       )}
       {usageText(report.providerUsage, report.modelInvoked) && (
         <p>{usageText(report.providerUsage, report.modelInvoked)}</p>

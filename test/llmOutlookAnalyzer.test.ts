@@ -122,26 +122,31 @@ describe("LlmOutlookAnalyzer", () => {
   });
   afterEach(() => clearMockTokenizer());
   it("blocks a call when any live gate fails", async () => {
-    const cases = [
-      {},
-      { ANALYSIS_PROVIDER: "chutes", LLM_LIVE_ENABLED: "false", CHUTES_API_KEY: "test-key" },
-      {
+    const cases: NodeJS.ProcessEnv[] = [
+      withTestChutesModelEnv({
+        ANALYSIS_PROVIDER: "chutes",
+        LLM_LIVE_ENABLED: "false",
+        CHUTES_API_KEY: "test-key",
+      }),
+      withTestChutesModelEnv({
         ANALYSIS_PROVIDER: "chutes",
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "replace_me_only_when_you_are_ready",
-      },
-      {
-        ANALYSIS_PROVIDER: "chutes",
-        LLM_LIVE_ENABLED: "true",
-        CHUTES_API_KEY: "test-key",
-        LLM_MODEL: "other-model",
-      },
-      {
+      }),
+      (() => {
+        const broken = withTestChutesModelEnv({
+          ANALYSIS_PROVIDER: "chutes",
+          LLM_LIVE_ENABLED: "true",
+          CHUTES_API_KEY: "test-key",
+        });
+        broken.CHUTES_MODEL_PROMPT_USD_PER_MILLION = "not-a-number";
+        return broken;
+      })(),
+      withTestChutesModelEnv({
         ANALYSIS_PROVIDER: "mock",
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "test-key",
-        LLM_MODEL: testLlmRuntimeFields().model,
-      },
+      }),
     ];
     for (const env of cases) {
       const recorded = recordingTransport(completion({
@@ -154,7 +159,7 @@ describe("LlmOutlookAnalyzer", () => {
         recorded.transport,
         undefined,
         "fixtures",
-        { runEnv: withTestChutesModelEnv({ ...env }) },
+        { runEnv: env },
       );
       await assert.rejects(
         () => analyzer.analyzePerson("analyst", [

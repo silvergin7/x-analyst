@@ -14,7 +14,7 @@ import {
 } from "./config/desearchSettings.js";
 import {
   LLM_MAX_QUESTION_CHARS,
-  applyChutesModelToEnv,
+  llmRuntimeConfigForChutesPlan,
   loadInputMaxChars,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
@@ -45,6 +45,21 @@ import {
 } from "./runtime/savedSlice.js";
 import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import { LlmRunSpendLedger } from "./analyze/llmRunSpendLedger.js";
+import { readAnalyzeCliTransportDeps } from "./analyze/analyzeCliDeps.js";
+import { createFetchChutesCatalogTransport } from "./analyze/chutesCatalogTransport.js";
+import {
+  buildChutesModelPlanForRun,
+} from "./analyze/buildChutesModelPlanForRun.js";
+import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
+import { recordValidChutesModel } from "./analyze/chutesModelState.js";
+import type { ChutesCatalogTransport } from "./analyze/chutesCatalogTransport.js";
+import type { HuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfo.js";
+import type { HuggingFaceDownloadTransport } from "./analyze/huggingfaceTokenizerDownload.js";
+import {
+  type MutableChutesRunBinding,
+} from "./analyze/chutesRuntimeModel.js";
+import { loadTokenizerRuntimeFromJsonPath } from "./analyze/tokenizerRuntime.js";
+import { readTokenizerJsonPath } from "./analyze/tokenizerRuntimeEnv.js";
 import type {
   AnalysisProviderLabel,
   AnalysisQuestion,
@@ -53,6 +68,7 @@ import type {
   PersonOutlookReport,
   PostSource,
   BudgetEstimate,
+  ChutesModelAttempt,
   ProviderTokenUsage,
 } from "./types.js";
 
@@ -61,6 +77,7 @@ export interface HandleAnalysisFailure {
   message: string;
   providerUsage?: ProviderTokenUsage;
   budgetEstimate?: BudgetEstimate;
+  llmModelAttempts?: ChutesModelAttempt[];
 }
 
 export interface RunReportResult {
@@ -92,6 +109,11 @@ export interface RunReportOptions {
   /** Called with the local estimate after it passes the checks and before HTTP. */
   onEstimate?: (estimate: BudgetEstimate) => void;
   chutesModelPlan?: ChutesModelPlan;
+  catalogTransport?: ChutesCatalogTransport;
+  hfTransport?: HuggingFaceModelInfoTransport;
+  hfDownloadTransport?: HuggingFaceDownloadTransport;
+  /** Owner override from .env LLM_MODEL at run start; never written back into env. */
+  ownerForcedModelId?: string;
 }
 
 /** Configuration or question rejected before any paid request. */
@@ -175,10 +197,10 @@ export async function runReport(
 
   const postsSelected = loadPostsProviderConfig(env).provider;
   const desearchSettings = loadDesearchSettings(env);
-  if (options.chutesModelPlan !== undefined) {
-    applyChutesModelToEnv(env, options.chutesModelPlan.primary.model);
-  }
-  const llm = loadLlmRuntimeConfig(env);
+  const llm =
+    options.chutesModelPlan !== undefined
+      ? llmRuntimeConfigForChutesPlan(env, options.chutesModelPlan.primary.model)
+      : loadLlmRuntimeConfig(env);
   const problems: string[] = [];
   if (!options.replayPath && postsSelected === "desearch" && !desearchSettings.liveEligible) {
     problems.push(
@@ -387,6 +409,69 @@ export async function runReport(
     handleFailures: HandleAnalysisFailure[];
   }> {
     const runLedger = analysisSource === "chutes" ? new LlmRunSpendLedger() : undefined;
+    const transportDeps = readAnalyzeCliTransportDeps();
+    const catalogTransport =
+      options.catalogTransport ?? transportDeps.catalogTransport ?? createFetchChutesCatalogTransport();
+    const hfTransport =
+      options.hfTransport ?? transportDeps.hfTransport ?? createHuggingFaceModelInfoTransport();
+    const hfDownloadTransport = options.hfDownloadTransport ?? transportDeps.hfDownloadTransport;
+    const activeRunBinding: MutableChutesRunBinding = {};
+    if (options.chutesModelPlan !== undefined) {
+      const jsonPath = readTokenizerJsonPath(env);
+      const root = env.CHUTES_TOKENIZER_ROOT?.trim();
+      const commit = env.CHUTES_TOKENIZER_COMMIT?.trim();
+      const sha256 = env.CHUTES_TOKENIZER_SHA256?.trim();
+      if (
+        jsonPath !== undefined &&
+        root !== undefined &&
+        root !== "" &&
+        commit !== undefined &&
+        commit !== "" &&
+        sha256 !== undefined &&
+        sha256 !== ""
+      ) {
+        activeRunBinding.current = {
+          catalogModel: options.chutesModelPlan.primary.model,
+          runtimeConfig: llm,
+          tokenizerJsonPath: jsonPath,
+          tokenizerPin: { root, commit, sha256 },
+          tokenizerRuntime: loadTokenizerRuntimeFromJsonPath(jsonPath),
+        };
+      }
+    }
+    const planRef =
+      options.chutesModelPlan === undefined
+        ? undefined
+        : { current: options.chutesModelPlan };
+    const ownerForcedModelId = options.ownerForcedModelId?.trim();
+    const rebuildChutesModelPlan =
+      planRef === undefined ||
+      (ownerForcedModelId !== undefined && ownerForcedModelId !== "")
+        ? undefined
+        : async (excludeModelIds: readonly string[]) => {
+            const replay = options.replayPath !== undefined;
+            const plan = await buildChutesModelPlanForRun({
+              env,
+              handles,
+              question: question.text,
+              referenceDate: analysisDate,
+              replay,
+              catalogTransport,
+              hfTransport,
+              hfDownloadTransport,
+              excludeModelIds,
+              ownerForcedModelId,
+            });
+            planRef.current = plan;
+            if (activeRunBinding.current !== undefined) {
+              activeRunBinding.current = {
+                ...activeRunBinding.current,
+                catalogModel: plan.primary.model,
+                runtimeConfig: llmRuntimeConfigForChutesPlan(env, plan.primary.model),
+              };
+            }
+            return plan;
+          };
     const analyzer =
       analysisSource === "chutes"
         ? new LlmOutlookAnalyzer(
@@ -394,7 +479,17 @@ export async function runReport(
             options.chutesTransport ?? createFetchChutesTransport(),
             referenceDate,
             postsSource,
-            { runEnv: env, onEstimate: options.onEstimate, runLedger },
+            {
+              runEnv: env,
+              onEstimate: options.onEstimate,
+              runLedger,
+              chutesModelPlan: planRef?.current,
+              chutesModelPlanRef: planRef,
+              hfModelTransport: hfTransport,
+              hfDownloadTransport,
+              activeRunBinding,
+              rebuildChutesModelPlan,
+            },
           )
         : new MockOutlookAnalyzer();
     const reports: PersonOutlookReport[] = [];
@@ -412,6 +507,9 @@ export async function runReport(
           invalidPostsSkipped: outcome.invalidPostsSkipped,
         });
         reports.push(report);
+        if (report.llmModel !== undefined && report.modelInvoked === true) {
+          recordValidChutesModel(report.llmModel, env);
+        }
       } catch (err) {
         const known =
           err instanceof LlmCallError ||
@@ -424,6 +522,9 @@ export async function runReport(
           message: known ? err.message : "Analysis failed unexpectedly",
           ...(failedUsage ? { providerUsage: failedUsage } : {}),
           ...(estimate ? { budgetEstimate: estimate } : {}),
+          ...(err instanceof LlmCallError && err.llmModelAttempts !== undefined
+            ? { llmModelAttempts: err.llmModelAttempts }
+            : {}),
         });
       }
     }

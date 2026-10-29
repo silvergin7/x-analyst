@@ -139,7 +139,7 @@ export async function buildChutesModelPlan(input: {
   }
   const candidates = toCandidates(stickyRanked, input.ceilings);
   const primary = candidates[0]!;
-  const fallbacks = candidates.slice(1);
+  const fallbacks = candidates.slice(1, 3);
   const state = readChutesModelState(input.env);
   return {
     skippedCatalogEntries: input.skippedCatalogEntries,
@@ -147,5 +147,24 @@ export async function buildChutesModelPlan(input: {
     primary,
     fallbacks,
     priorValidReport: state?.validModels.includes(primary.model.id) ?? false,
+  };
+}
+
+export function withPrimaryModelAtRank(
+  plan: ChutesModelPlan,
+  primaryModelId: string,
+): ChutesModelPlan {
+  const index = plan.candidates.findIndex((item) => item.model.id === primaryModelId);
+  if (index < 0) {
+    throw new ChutesModelSelectionError(
+      `Selected model ${primaryModelId} is not in the ranked candidate list`,
+    );
+  }
+  const primary = plan.candidates[index]!;
+  const fallbacks = plan.candidates.slice(index + 1, index + 3);
+  return {
+    ...plan,
+    primary,
+    fallbacks,
   };
 }

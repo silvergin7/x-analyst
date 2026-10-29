@@ -145,35 +145,19 @@ export function readInputMaxCharsStrict(
   return { ok: true, value: n };
 }
 
-/** Resolve opt-in Chutes gates. Missing or mock provider is not eligible. */
-export function loadLlmRuntimeConfig(
-  env: NodeJS.ProcessEnv = process.env,
-): LlmRuntimeConfig {
+function loadChutesCallGates(env: NodeJS.ProcessEnv): {
+  provider: string;
+  liveEnabled: boolean;
+  apiKey: string;
+  chatCompletionsUrl: string;
+  eligible: boolean;
+  reason?: string;
+} {
   const provider = readEnv(env, "ANALYSIS_PROVIDER").toLowerCase();
   const liveEnabled = readEnv(env, "LLM_LIVE_ENABLED") === "true";
   const apiKey = readEnv(env, "CHUTES_API_KEY");
-  const modelRaw = readEnv(env, "LLM_MODEL");
-  const model = modelRaw;
   const chatCompletionsUrl = loadChutesChatCompletionsUrl(env);
-  const pricingPrompt = readEnv(env, "CHUTES_MODEL_PROMPT_USD_PER_MILLION");
-  const pricingCompletion = readEnv(env, "CHUTES_MODEL_COMPLETION_USD_PER_MILLION");
-  const contextRaw = readEnv(env, "CHUTES_MODEL_CONTEXT_LENGTH");
-  const modelPricing: ChutesModelPricing = {
-    promptUsdPerMillion: Number(pricingPrompt),
-    completionUsdPerMillion: Number(pricingCompletion),
-  };
-  const contextLengthTokens = Number(contextRaw);
-
-  const base = {
-    provider,
-    liveEnabled,
-    apiKey,
-    model,
-    chatCompletionsUrl,
-    modelPricing,
-    contextLengthTokens,
-  };
-
+  const base = { provider, liveEnabled, apiKey, chatCompletionsUrl };
   if (provider !== "chutes") {
     return {
       ...base,
@@ -195,12 +179,37 @@ export function loadLlmRuntimeConfig(
       reason: "CHUTES_API_KEY must be a real key, not the placeholder",
     };
   }
+  return { ...base, eligible: true };
+}
+
+/** Resolve opt-in Chutes gates. Missing or mock provider is not eligible. */
+export function loadLlmRuntimeConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): LlmRuntimeConfig {
+  const gates = loadChutesCallGates(env);
+  const model = readEnv(env, "LLM_MODEL");
+  const pricingPrompt = readEnv(env, "CHUTES_MODEL_PROMPT_USD_PER_MILLION");
+  const pricingCompletion = readEnv(env, "CHUTES_MODEL_COMPLETION_USD_PER_MILLION");
+  const contextRaw = readEnv(env, "CHUTES_MODEL_CONTEXT_LENGTH");
+  const modelPricing: ChutesModelPricing = {
+    promptUsdPerMillion: Number(pricingPrompt),
+    completionUsdPerMillion: Number(pricingCompletion),
+  };
+  const contextLengthTokens = Number(contextRaw);
+  const base: LlmRuntimeConfig = {
+    provider: gates.provider,
+    liveEnabled: gates.liveEnabled,
+    apiKey: gates.apiKey,
+    model,
+    chatCompletionsUrl: gates.chatCompletionsUrl,
+    modelPricing,
+    contextLengthTokens,
+    eligible: false,
+    reason: gates.reason,
+  };
+  if (!gates.eligible) return base;
   if (model === "") {
-    return {
-      ...base,
-      eligible: false,
-      reason: "Chutes model is not selected",
-    };
+    return { ...base, reason: "Chutes model is not selected" };
   }
   if (
     !Number.isFinite(modelPricing.promptUsdPerMillion) ||
@@ -212,12 +221,43 @@ export function loadLlmRuntimeConfig(
   ) {
     return {
       ...base,
-      eligible: false,
       reason: "Chutes model pricing or context window is not configured",
     };
   }
+  return { ...base, eligible: true, reason: undefined };
+}
 
-  return { ...base, eligible: true };
+export function llmRuntimeConfigForChutesPlan(
+  env: NodeJS.ProcessEnv,
+  plan: {
+    id: string;
+    pricing: ChutesModelPricing;
+    contextLength: number;
+  },
+): LlmRuntimeConfig {
+  const gates = loadChutesCallGates(env);
+  const ineligible: LlmRuntimeConfig = {
+    provider: gates.provider,
+    liveEnabled: gates.liveEnabled,
+    apiKey: gates.apiKey,
+    model: plan.id,
+    chatCompletionsUrl: gates.chatCompletionsUrl,
+    modelPricing: plan.pricing,
+    contextLengthTokens: plan.contextLength,
+    eligible: false,
+    reason: gates.reason,
+  };
+  if (!gates.eligible) return ineligible;
+  return {
+    provider: "chutes",
+    liveEnabled: true,
+    apiKey: gates.apiKey,
+    model: plan.id,
+    chatCompletionsUrl: gates.chatCompletionsUrl,
+    modelPricing: plan.pricing,
+    contextLengthTokens: plan.contextLength,
+    eligible: true,
+  };
 }
 
 /** Completion footprint including the thinking allowance reserved in budgets. */
@@ -249,12 +289,3 @@ export function priceTokenCeiling(
   return { inputTokensUpper, outputTokensUpper, estimatedUsd };
 }
 
-export function applyChutesModelToEnv(
-  env: NodeJS.ProcessEnv,
-  model: { id: string; pricing: ChutesModelPricing; contextLength: number },
-): void {
-  env.LLM_MODEL = model.id;
-  env.CHUTES_MODEL_PROMPT_USD_PER_MILLION = String(model.pricing.promptUsdPerMillion);
-  env.CHUTES_MODEL_COMPLETION_USD_PER_MILLION = String(model.pricing.completionUsdPerMillion);
-  env.CHUTES_MODEL_CONTEXT_LENGTH = String(model.contextLength);
-}

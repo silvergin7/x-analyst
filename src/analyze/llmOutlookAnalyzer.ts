@@ -19,13 +19,37 @@ import {
 import { fitAnalysisInputToContextWindow } from "./fitContextWindow.js";
 import { summarizeRelevance } from "./relevance.js";
 import { classificationOutputTokenCeiling } from "./outputBudget.js";
-import {
-  requestChutesCompletion,
-  type ChutesTransport,
-} from "./chutesClient.js";
+import { requestChutesCompletion, type ChutesTransport } from "./chutesClient.js";
 import type { LlmRunSpendLedger } from "./llmRunSpendLedger.js";
-import { buildChatMessages } from "./llmPrompt.js";
-import { loadLlmRuntimeConfig, type LlmRuntimeConfig } from "../config/llmSettings.js";
+import {
+  requestChutesCompletionWithFallbacks,
+  type PreparedChutesAttempt,
+} from "./chutesModelFallbackCall.js";
+import type { ChutesCatalogModel } from "./chutesModelCatalog.js";
+import type { ChutesModelPlan } from "./chutesModelSelection.js";
+import {
+  createFetchHfDownloadTransport,
+  loadTokenizerCache,
+  type HuggingFaceDownloadTransport,
+} from "./huggingfaceTokenizerDownload.js";
+import {
+  chutesRuntimeConfigFromCatalogModel,
+  type MutableChutesRunBinding,
+} from "./chutesRuntimeModel.js";
+import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
+import type { HuggingFaceModelInfoTransport } from "./huggingfaceModelInfo.js";
+import { buildChatMessages, estimateRequestBudget, buildChutesRequestBody } from "./llmPrompt.js";
+import {
+  fitsModelContextWindow,
+  loadLlmRuntimeConfig,
+  LLM_CALL_BUDGET_USD,
+  type LlmRuntimeConfig,
+} from "../config/llmSettings.js";
+import {
+  applyTokenizerPinToEnv,
+  readTokenizerJsonPath,
+} from "./tokenizerRuntimeEnv.js";
+import type { TokenizerPin } from "../types.js";
 import type { OutlookAnalyzer } from "./outlookAnalyzer.js";
 import { validateEvidenceIntegrity } from "./outlookAnalyzer.js";
 import { checkClassifications, parseModelOutlook, resolveAliasClassifications } from "./classification.js";
@@ -60,6 +84,12 @@ export interface LlmOutlookAnalyzerOptions {
   runEnv: NodeJS.ProcessEnv;
   onEstimate?: (estimate: BudgetEstimate) => void;
   runLedger?: LlmRunSpendLedger;
+  chutesModelPlan?: ChutesModelPlan;
+  chutesModelPlanRef?: { current: ChutesModelPlan };
+  hfModelTransport?: HuggingFaceModelInfoTransport;
+  hfDownloadTransport?: HuggingFaceDownloadTransport;
+  activeRunBinding?: MutableChutesRunBinding;
+  rebuildChutesModelPlan?: (excludeModelIds: readonly string[]) => Promise<ChutesModelPlan>;
 }
 
 export class LlmOutlookAnalyzer implements OutlookAnalyzer {
@@ -89,6 +119,12 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     this.runEnv = options.runEnv;
     this.onEstimate = options.onEstimate;
     this.runLedger = options.runLedger;
+    this.chutesModelPlan = options.chutesModelPlan;
+    this.chutesModelPlanRef = options.chutesModelPlanRef;
+    this.hfModelTransport = options.hfModelTransport;
+    this.hfDownloadTransport = options.hfDownloadTransport;
+    this.activeRunBinding = options.activeRunBinding;
+    this.rebuildChutesModelPlan = options.rebuildChutesModelPlan;
   }
 
   private readonly config: LlmRuntimeConfig;
@@ -96,6 +132,121 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
   private readonly runEnv: NodeJS.ProcessEnv;
   private readonly onEstimate?: (estimate: BudgetEstimate) => void;
   private readonly runLedger?: LlmRunSpendLedger;
+  private readonly chutesModelPlan?: ChutesModelPlan;
+  private readonly chutesModelPlanRef?: { current: ChutesModelPlan };
+  private readonly hfModelTransport?: HuggingFaceModelInfoTransport;
+  private readonly hfDownloadTransport?: HuggingFaceDownloadTransport;
+  private readonly activeRunBinding?: MutableChutesRunBinding;
+  private readonly rebuildChutesModelPlan?: (
+    excludeModelIds: readonly string[],
+  ) => Promise<ChutesModelPlan>;
+
+  private activeConfig(): LlmRuntimeConfig {
+    return this.activeRunBinding?.current?.runtimeConfig ?? this.config;
+  }
+
+  private commitSuccessfulModel(modelId: string, tokenizerPin: TokenizerPin, tokenizerJsonPath: string): void {
+    const plan = this.chutesModelPlanRef?.current ?? this.chutesModelPlan;
+    const candidate = plan?.candidates.find((item) => item.model.id === modelId);
+    if (candidate === undefined || this.activeRunBinding === undefined) return;
+    const runtimeConfig = chutesRuntimeConfigFromCatalogModel(
+      candidate.model,
+      this.config.chatCompletionsUrl,
+      this.config.apiKey,
+    );
+    this.activeRunBinding.current = {
+      catalogModel: candidate.model,
+      runtimeConfig,
+      tokenizerJsonPath,
+      tokenizerPin,
+      tokenizerRuntime: loadTokenizerRuntimeFromJsonPath(tokenizerJsonPath),
+    };
+    applyTokenizerPinToEnv(this.runEnv, tokenizerJsonPath, tokenizerPin);
+  }
+
+  private readTokenizerPin(): TokenizerPin | undefined {
+    const root = this.runEnv.CHUTES_TOKENIZER_ROOT?.trim();
+    const commit = this.runEnv.CHUTES_TOKENIZER_COMMIT?.trim();
+    const sha256 = this.runEnv.CHUTES_TOKENIZER_SHA256?.trim();
+    if (root === undefined || root === "" || commit === undefined || commit === "" || sha256 === undefined || sha256 === "") {
+      return undefined;
+    }
+    return { root, commit, sha256 };
+  }
+
+  private async prepareFallbackAttempt(
+    model: ChutesCatalogModel,
+    posts: Post[],
+    handle: string,
+    question: string,
+    retrieval: RetrievalContext,
+  ): Promise<PreparedChutesAttempt | null> {
+    if (this.hfModelTransport === undefined) return null;
+    const info = await this.hfModelTransport.fetchModelInfo(model.root);
+    if (info === null) return null;
+    const downloadTransport = this.hfDownloadTransport ?? createFetchHfDownloadTransport();
+    let loaded;
+    try {
+      loaded = await loadTokenizerCache(model.root, info.sha, this.runEnv, downloadTransport);
+    } catch {
+      return null;
+    }
+    const runtime = loadTokenizerRuntimeFromJsonPath(loaded.tokenizerJsonPath);
+    const config = chutesRuntimeConfigFromCatalogModel(
+      model,
+      this.config.chatCompletionsUrl,
+      this.config.apiKey,
+    );
+    const refit = fitAnalysisInputToContextWindow(
+      planAnalysisInput(posts, handle, {
+        inputMaxChars: retrieval.inputMaxChars,
+        lookbackCutoffMs: retrieval.lookbackCutoffMs,
+      }),
+      {
+        question,
+        referenceDate: this.referenceDate,
+        postSource: this.postSource,
+        env: this.runEnv,
+        modelId: model.id,
+        contextLengthTokens: model.contextLength,
+        tokenizerJsonPath: loaded.tokenizerJsonPath,
+        tokenizerRuntime: runtime,
+      },
+    );
+    if (refit.sent.length === 0) return null;
+    const aliases = postAliases(refit.sent).map((item) => item.alias);
+    const maxTokens = classificationOutputTokenCeiling(refit.sent.length, this.runEnv, runtime);
+    const messages = buildChatMessages(
+      question,
+      refit.sent,
+      this.referenceDate,
+      this.postSource,
+    );
+    const body = buildChutesRequestBody(messages, config.model, maxTokens, aliases);
+    const estimate = estimateRequestBudget(body, this.runEnv, model.pricing, runtime);
+    if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) return null;
+    if (
+      !fitsModelContextWindow(
+        config.contextLengthTokens,
+        estimate.inputTokensUpper,
+        maxTokens,
+      )
+    ) {
+      return null;
+    }
+    if (this.runLedger !== undefined && this.runLedger.wouldExceedRunBudget(estimate.estimatedUsd)) {
+      return null;
+    }
+    return {
+      config,
+      messages,
+      maxTokens,
+      aliases,
+      tokenizerPin: loaded.meta,
+      tokenizerJsonPath: loaded.tokenizerJsonPath,
+      tokenizerRuntime: runtime,
+    };
+  }
 
   async analyzePerson(
     handle: string,
@@ -104,9 +255,8 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     retrieval: RetrievalContext,
   ): Promise<PersonOutlookReport> {
     assertQuestionBound(question.text);
-    const fitContext = this.config.eligible
-      ? this.config
-      : loadLlmRuntimeConfig(this.runEnv);
+    const activeConfig = this.activeConfig();
+    const binding = this.activeRunBinding?.current;
     const plan = fitAnalysisInputToContextWindow(
       planAnalysisInput(posts, handle, {
         inputMaxChars: retrieval.inputMaxChars,
@@ -117,8 +267,10 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
         referenceDate: this.referenceDate,
         postSource: this.postSource,
         env: this.runEnv,
-        modelId: fitContext.model,
-        contextLengthTokens: fitContext.contextLengthTokens,
+        modelId: activeConfig.model,
+        contextLengthTokens: activeConfig.contextLengthTokens,
+        tokenizerJsonPath: binding?.tokenizerJsonPath,
+        tokenizerRuntime: binding?.tokenizerRuntime,
       },
     );
     const base = {
@@ -158,16 +310,67 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       this.referenceDate,
       this.postSource,
     );
-    const completion = await requestChutesCompletion(
-      this.config,
+    const runtime = binding?.tokenizerRuntime;
+    const maxTokens = classificationOutputTokenCeiling(plan.sent.length, this.runEnv, runtime);
+    const aliasIds = aliases.map((item) => item.alias);
+    const initialAttempt: PreparedChutesAttempt = {
+      config: activeConfig,
       messages,
-      this.transport,
-      this.runEnv,
-      classificationOutputTokenCeiling(plan.sent.length, this.runEnv),
-      aliases.map((item) => item.alias),
-      this.onEstimate,
-      this.runLedger,
-    );
+      maxTokens,
+      aliases: aliasIds,
+      tokenizerPin: binding?.tokenizerPin ?? this.readTokenizerPin(),
+      tokenizerJsonPath: binding?.tokenizerJsonPath ?? readTokenizerJsonPath(this.runEnv),
+      tokenizerRuntime: runtime,
+    };
+    const activePlan = this.chutesModelPlanRef?.current ?? this.chutesModelPlan;
+    const callResult =
+      activePlan !== undefined && this.hfModelTransport !== undefined
+        ? await requestChutesCompletionWithFallbacks({
+            primaryConfig: activeConfig,
+            plan: activePlan,
+            initialAttempt,
+            prepareFallback: (model) =>
+              this.prepareFallbackAttempt(model, posts, handle, question.text, retrieval),
+            refreshPlan: this.rebuildChutesModelPlan
+              ? async (excludeModelIds) => {
+                  const next = await this.rebuildChutesModelPlan!(excludeModelIds);
+                  if (this.chutesModelPlanRef !== undefined) {
+                    this.chutesModelPlanRef.current = next;
+                  }
+                  return next;
+                }
+              : undefined,
+            transport: this.transport,
+            env: this.runEnv,
+            onEstimate: this.onEstimate,
+            runLedger: this.runLedger,
+          })
+        : {
+            completion: await requestChutesCompletion(
+              activeConfig,
+              messages,
+              this.transport,
+              this.runEnv,
+              maxTokens,
+              aliasIds,
+              this.onEstimate,
+              this.runLedger,
+              runtime,
+            ),
+            modelId: activeConfig.model,
+            modelsTried: [activeConfig.model],
+            modelAttempts: [{ modelId: activeConfig.model, kind: "sent" as const }],
+            tokenizerPin: initialAttempt.tokenizerPin,
+            tokenizerJsonPath: initialAttempt.tokenizerJsonPath,
+          };
+    const completion = callResult.completion;
+    if (callResult.tokenizerPin !== undefined && callResult.tokenizerJsonPath !== undefined) {
+      this.commitSuccessfulModel(
+        callResult.modelId,
+        callResult.tokenizerPin,
+        callResult.tokenizerJsonPath,
+      );
+    }
     try {
       const parsed = parseModelOutlook(
         completion.content,
@@ -214,6 +417,10 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
           ? { assetOutlooksDropped: checked.assetOutlooksDropped }
           : {}),
         modelInvoked: true,
+        llmModel: callResult.modelId,
+        llmModelsTried: callResult.modelsTried,
+        llmModelAttempts: callResult.modelAttempts,
+        ...(callResult.tokenizerPin ? { tokenizerPin: callResult.tokenizerPin } : {}),
         providerUsage: completion.providerUsage,
         budgetEstimate: completion.estimate,
       };

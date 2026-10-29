@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "id": "rank1/primary-TEE",
+      "root": "zai-org/GLM-5.2",
+      "pricing": { "prompt": 0.8, "completion": 3.0 },
+      "context_length": 131072,
+      "max_output_length": 65536,
+      "supported_features": ["structured_outputs", "reasoning"],
+      "confidential_compute": true
+    },
+    {
+      "id": "rank2/fallback-TEE",
+      "root": "vendor/cheap",
+      "pricing": { "prompt": 0.5, "completion": 2.0 },
+      "context_length": 131072,
+      "max_output_length": 65536,
+      "supported_features": ["structured_outputs", "reasoning"],
+      "confidential_compute": true
+    },
+    {
+      "id": "rank3/third-TEE",
+      "root": "zai-org/GLM-5.2",
+      "pricing": { "prompt": 0.2, "completion": 1.0 },
+      "context_length": 131072,
+      "max_output_length": 65536,
+      "supported_features": ["structured_outputs", "reasoning"],
+      "confidential_compute": true
+    }
+  ]
+}

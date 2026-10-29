@@ -165,6 +165,13 @@ export interface RetrievalContext {
   invalidPostsSkipped?: Record<string, number>;
 }
 
+export type ChutesModelAttemptKind = "sent" | "skipped";
+
+export interface ChutesModelAttempt {
+  modelId: string;
+  kind: ChutesModelAttemptKind;
+}
+
 export interface PersonOutlookReport {
   handle: string;
   outlook: MarketOutlook;
@@ -187,6 +194,14 @@ export interface PersonOutlookReport {
   analysisInput?: AnalysisInputRecord[];
   /** False when the opt-in analyzer returned without calling the model. */
   modelInvoked?: boolean;
+  /** Chutes model id used for the successful classification call. */
+  llmModel?: string;
+  /** Chutes model ids attempted for this handle, in order. */
+  llmModelsTried?: string[];
+  /** Chutes models considered for this handle, including skipped fallbacks. */
+  llmModelAttempts?: ChutesModelAttempt[];
+  /** Hugging Face tokenizer pin used for token counting on this handle. */
+  tokenizerPin?: TokenizerPin;
   /** Provider-reported token counts. Null means the provider omitted usage. */
   providerUsage?: ProviderTokenUsage | null;
   /** Pessimistic pre-request ceiling. Distinct from providerUsage. */
@@ -233,6 +248,12 @@ export interface AnalysisInputRecord {
   sentExcerpt?: string;
   /** First 100 characters of Desearch `quote.text`. Present on sent quotes when that field was a string. */
   quotedPostExcerpt?: string;
+}
+
+export interface TokenizerPin {
+  root: string;
+  commit: string;
+  sha256: string;
 }
 
 /** Token counts reported by the provider after a completed call. */
