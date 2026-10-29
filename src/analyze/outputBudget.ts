@@ -1,6 +1,7 @@
 import { LLM_MAX_EXPLANATION_CHARS } from "../config/llmSettings.js";
-import { EMPTY_THINKING_BLOCK_WITH_NEWLINES } from "./modelCompletionText.js";
-import { getQwenTokenizerRuntime } from "./qwenTokenizerRuntime.js";
+import { getRunTokenizerRuntime } from "./tokenizerRuntimeEnv.js";
+import type { TokenizerRuntime } from "./tokenizerRuntime.js";
+import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
 
 /** Words allowed in one post-classification reason. */
 export const CLASSIFICATION_REASON_MAX_WORDS = 20;
@@ -71,15 +72,29 @@ export function classificationOutputJsonByteCeiling(sentCount: number): number {
   return Buffer.byteLength(JSON.stringify(payload), "utf8");
 }
 
-export function emptyThinkingBlockTokenCeiling(env: NodeJS.ProcessEnv): number {
-  return getQwenTokenizerRuntime(env).encode(EMPTY_THINKING_BLOCK_WITH_NEWLINES).length;
+function resolveRuntime(env: NodeJS.ProcessEnv, runtimeOverride?: TokenizerRuntime): TokenizerRuntime {
+  if (runtimeOverride !== undefined) return runtimeOverride;
+  return getRunTokenizerRuntime(env);
 }
 
 export function classificationOutputTokenCeiling(
   sentCount: number,
   env: NodeJS.ProcessEnv,
+  runtimeOverride?: TokenizerRuntime,
 ): number {
-  return (
-    classificationOutputJsonByteCeiling(sentCount) + emptyThinkingBlockTokenCeiling(env)
+  const runtime = resolveRuntime(env, runtimeOverride);
+  const bytes = classificationOutputJsonByteCeiling(sentCount);
+  const encoded = runtime.encode("x".repeat(bytes));
+  return Math.max(encoded.length, bytes);
+}
+
+export function classificationOutputTokenCeilingForPath(
+  sentCount: number,
+  tokenizerJsonPath: string,
+): number {
+  return classificationOutputTokenCeiling(
+    sentCount,
+    {},
+    loadTokenizerRuntimeFromJsonPath(tokenizerJsonPath),
   );
 }

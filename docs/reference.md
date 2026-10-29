@@ -48,7 +48,7 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 | `ANALYSIS_PROVIDER` | `chutes` for the LLM path when live. |
 | `LLM_LIVE_ENABLED` | Must be `true` with provider and key for Chutes. |
 | `CHUTES_API_KEY` | Bearer token for Chutes. |
-| `LLM_MODEL` | Must be `Qwen/Qwen3-32B-TEE` for the coded rate table. |
+| `LLM_MODEL` | Optional catalog id override when it still passes eligibility for the run. |
 | `LLM_INPUT_MAX_CHARS` | Character budget for post text sent to the model (default 20,000 when unset; malformed non-empty values stop the run). |
 | Chutes request timeout | Coded as `LLM_REQUEST_TIMEOUT_MS` (120 seconds) in `src/config/llmSettings.ts`; one attempt, no retry. |
 | `ANALYST_LIST_PATH` | JSON roster when `--handles` is omitted on analyze. |

@@ -10,13 +10,15 @@ import { formatFullReport } from "../src/format/report.js";
 import { createFetchSliceCache } from "../src/runtime/fetchCache.js";
 import { ReportConfigError, ReportRunError, runReport } from "../src/runReport.js";
 import { classifiedOutlook } from "./classifiedOutlook.js";
+import { TEST_CHUTES_MODEL_ID, withTestChutesModelEnv } from "./support/chutesTestModel.js";
+import { testChutesModelPlan } from "./support/testChutesModelPlan.js";
 
 const question = { text: "What is each analyst's current market outlook?" };
-const MODEL = "Qwen/Qwen3-32B-TEE";
+const MODEL = TEST_CHUTES_MODEL_ID;
 const testSliceDir = mkdtempSync(path.join(tmpdir(), "x-analyst-slices-"));
 
 function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
+  return withTestChutesModelEnv({
     POSTS_PROVIDER: "desearch",
     DESEARCH_LIVE_ENABLED: "true",
     DESEARCH_API_KEY: "unit-test-only-not-a-secret",
@@ -26,10 +28,9 @@ function desearchEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ANALYSIS_PROVIDER: "chutes",
     LLM_LIVE_ENABLED: "true",
     CHUTES_API_KEY: "unit-test-only-not-a-secret",
-    LLM_MODEL: MODEL,
     X_ANALYST_SLICE_DIR: testSliceDir,
     ...extra,
-  };
+  });
 }
 
 function mockRunEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -157,7 +158,7 @@ describe("runReport live gates", () => {
     process.env.DESEARCH_LIVE_ENABLED = "true";
     process.env.DESEARCH_API_KEY = "shell-key-should-not-run";
     try {
-      const result = await runReport(["bullmacro"], question, {
+      const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
         referenceDate: "2026-11-02",
         env: mockRunEnv(),
         cache: createFetchSliceCache(),
@@ -181,7 +182,7 @@ describe("runReport live gates", () => {
       explanation: "Should not be used.",
       evidencePostIds: ["p1"],
     });
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: mockRunEnv(),
       cache: createFetchSliceCache(),
@@ -212,7 +213,7 @@ describe("runReport live gates", () => {
     };
     await assert.rejects(
       () =>
-        runReport(["bullmacro"], question, {
+        runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
           ...options,
           env: withSliceDir({ POSTS_PROVIDER: "desearch", ANALYSIS_PROVIDER: "mock" }),
         }),
@@ -220,7 +221,7 @@ describe("runReport live gates", () => {
     );
     await assert.rejects(
       () =>
-        runReport(["bullmacro"], question, {
+        runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
           ...options,
           env: withSliceDir({
             POSTS_PROVIDER: "desearch",
@@ -242,7 +243,7 @@ describe("runReport live gates", () => {
     );
     await assert.rejects(
       () =>
-        runReport(["bullmacro"], question, {
+        runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
           ...options,
           referenceDate: "2026-02-31",
           env: desearchEnv(),
@@ -261,7 +262,7 @@ describe("runReport live gates", () => {
       else env.DESEARCH_MAX_REQUESTS_PER_HANDLE = value;
       await assert.rejects(
         () =>
-          runReport(["bullmacro"], question, {
+          runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
             referenceDate: "2026-11-02",
             env,
             cache: createFetchSliceCache(),
@@ -287,7 +288,7 @@ describe("runReport live gates", () => {
       "The supplied original says growth remains constructive.",
       ["p1"],
     ));
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv(),
       cache: createFetchSliceCache(),
@@ -345,7 +346,7 @@ describe("runReport live gates", () => {
       "The supplied originals say growth remains constructive.",
       ["p1", "p2"],
     ));
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv(),
       cache: createFetchSliceCache(),
@@ -408,7 +409,7 @@ describe("runReport live gates", () => {
       "The supplied commentary is about duration.",
       ["p1"],
     ));
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv({ LLM_INPUT_MAX_CHARS: String(commentary.length + quoted.length) }),
       cache: createFetchSliceCache(),
@@ -463,7 +464,7 @@ describe("runReport live gates", () => {
       explanation: "Should not be used.",
       evidencePostIds: ["quote-1"],
     });
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv(),
       cache: createFetchSliceCache(),
@@ -488,14 +489,14 @@ describe("runReport live gates", () => {
       "The supplied original says growth remains constructive.",
       ["p1"],
     ));
-    const first = await runReport(["bullmacro"], question, {
+    const first = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "1" }),
       cache,
       desearchTransport: posts.transport,
       chutesTransport: model.transport,
     });
-    const second = await runReport(["bullmacro"], question, {
+    const second = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "1" }),
       cache,
@@ -509,7 +510,7 @@ describe("runReport live gates", () => {
     assert.equal(second.fetchedAt, first.fetchedAt);
     assert.equal(first.fetchedAt, "2026-11-02T12:00:00.000Z");
 
-    const fresh = await runReport(["bullmacro"], question, {
+    const fresh = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       fresh: true,
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "1" }),
@@ -521,7 +522,7 @@ describe("runReport live gates", () => {
     assert.equal(fresh.reused, false);
     assert.equal(fresh.fetchedAt, "2026-11-02T13:00:00.000Z");
 
-    await runReport(["bullmacro"], question, {
+    await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "2" }),
       cache,
@@ -530,7 +531,7 @@ describe("runReport live gates", () => {
     });
     assert.equal(posts.calls.length, 3);
 
-    const replaced = await runReport(["bullmacro"], question, {
+    const replaced = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "1" }),
       cache,
@@ -547,7 +548,7 @@ describe("runReport live gates", () => {
       { outlook: "bullish", explanation: "no", evidencePostIds: ["live-1"] },
       { finish_reason: "refusal", usage: { prompt_tokens: 9, completion_tokens: 1, total_tokens: 10 } },
     );
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv(),
       cache: createFetchSliceCache(),
@@ -569,7 +570,7 @@ describe("runReport live gates", () => {
       "The fixture originals are constructive.",
       ["p1", "p2"],
     ));
-    await runReport(["bullmacro"], question, {
+    await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: withSliceDir({
         ANALYSIS_PROVIDER: "chutes",
@@ -648,6 +649,7 @@ describe("runReport live gates", () => {
     };
     const cache = createFetchSliceCache();
     const result = await runReport(["bullmacro", "bearmacro", "other"], question, {
+      chutesModelPlan: testChutesModelPlan(),
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "3" }),
       cache,
@@ -725,6 +727,7 @@ describe("runReport live gates", () => {
     );
     const cache = createFetchSliceCache();
     const result = await runReport(["bullmacro", "bearmacro"], question, {
+      chutesModelPlan: testChutesModelPlan(),
       referenceDate: "2026-11-02",
       env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "2", X_ANALYST_SLICE_DIR: dir }),
       cache,
@@ -753,7 +756,7 @@ describe("runReport live gates", () => {
         };
       },
     };
-    const result = await runReport(["bullmacro"], question, {
+    const result = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: desearchEnv({ X_ANALYST_SLICE_DIR: dir }),
       cache: createFetchSliceCache(),
@@ -779,7 +782,7 @@ describe("runReport live gates", () => {
   it("saves a slice and replays it without calling Desearch", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
     const commit = "a".repeat(40);
-    const saved = await runReport(["bullmacro"], question, {
+    const saved = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: withSliceDir({
         POSTS_PROVIDER: "mock",
@@ -803,7 +806,7 @@ describe("runReport live gates", () => {
         throw new Error("Desearch must not be called");
       },
     };
-    const replayed = await runReport(["bullmacro"], question, {
+    const replayed = await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       replayPath: path.join(dir, files[0]!),
       env: withSliceDir({
@@ -841,7 +844,7 @@ describe("runReport live gates", () => {
 
   it("still calls Chutes when a replay selects live analysis", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
-    await runReport(["bullmacro"], question, {
+    await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: withSliceDir({ POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" }),
       cache: createFetchSliceCache(),
@@ -855,7 +858,7 @@ describe("runReport live gates", () => {
       "The supplied originals say growth remains constructive.",
       ["p1", "p2"],
     ));
-    await runReport(["bullmacro"], question, {
+    await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       replayPath: file,
       env: desearchEnv(),
@@ -876,7 +879,7 @@ describe("runReport live gates", () => {
 
   it("rejects a replay whose handles do not match before any request", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-"));
-    await runReport(["bullmacro"], question, {
+    await runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
       referenceDate: "2026-11-02",
       env: withSliceDir({ POSTS_PROVIDER: "mock", ANALYSIS_PROVIDER: "mock" }),
       cache: createFetchSliceCache(),
@@ -892,6 +895,7 @@ describe("runReport live gates", () => {
     await assert.rejects(
       () =>
         runReport(["otherhandle"], question, {
+          chutesModelPlan: testChutesModelPlan(),
           referenceDate: "2026-11-02",
           replayPath: file,
           env: desearchEnv(),
@@ -907,7 +911,7 @@ describe("runReport live gates", () => {
   it("rejects replay combined with a fresh fetch before any request", async () => {
     await assert.rejects(
       () =>
-        runReport(["bullmacro"], question, {
+        runReport(["bullmacro"], question, { chutesModelPlan: testChutesModelPlan(), 
           referenceDate: "2026-11-02",
           fresh: true,
           replayPath: "missing-slice.json",

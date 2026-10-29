@@ -1,0 +1,201 @@
+import assert from "node:assert/strict";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { LlmCallError } from "../src/analyze/chutesClient.js";
+import { loadTokenizerRuntimeFromJsonPath } from "../src/analyze/tokenizerRuntime.js";
+import {
+  fallbackCandidates,
+  requestChutesCompletionWithFallbacks,
+  type PreparedChutesAttempt,
+} from "../src/analyze/chutesModelFallbackCall.js";
+import type { ChutesModelPlan } from "../src/analyze/chutesModelSelection.js";
+import { DEFAULT_CHUTES_CHAT_COMPLETIONS_URL } from "../src/config/llmSettings.js";
+import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
+import { testLlmRuntimeFields, withTestChutesModelEnv } from "./support/chutesTestModel.js";
+
+function catalogModel(id: string) {
+  return {
+    id,
+    root: "vendor/root",
+    pricing: { promptUsdPerMillion: 0.5, completionUsdPerMillion: 2 },
+    contextLength: 131_072,
+    maxOutputLength: 65_536,
+    supportedFeatures: ["structured_outputs", "reasoning"],
+    confidentialCompute: true,
+  };
+}
+
+function planWith(ids: readonly string[]): ChutesModelPlan {
+  const candidates = ids.map((id, index) => ({
+    model: catalogModel(id),
+    rank: index + 1,
+    worstCaseUsdPerHandle: 0.01,
+  }));
+  return {
+    skippedCatalogEntries: 0,
+    candidates,
+    primary: candidates[0]!,
+    fallbacks: candidates.slice(1, 3),
+    priorValidReport: false,
+  };
+}
+
+function prepared(modelId: string, env: NodeJS.ProcessEnv): PreparedChutesAttempt {
+  const fields = testLlmRuntimeFields();
+  const jsonPath = env.CHUTES_TOKENIZER_JSON_PATH!;
+  return {
+    config: {
+      provider: "chutes",
+      liveEnabled: true,
+      apiKey: "test-key",
+      chatCompletionsUrl: DEFAULT_CHUTES_CHAT_COMPLETIONS_URL,
+      eligible: true,
+      model: modelId,
+      modelPricing: fields.modelPricing,
+      contextLengthTokens: fields.contextLengthTokens,
+    },
+    messages: [{ role: "user", content: "hi" }],
+    maxTokens: 100,
+    aliases: ["p1"],
+    tokenizerJsonPath: jsonPath,
+    tokenizerRuntime: loadTokenizerRuntimeFromJsonPath(jsonPath),
+  };
+}
+
+describe("requestChutesCompletionWithFallbacks", () => {
+  beforeEach(() => installByteQuarterMockTokenizer());
+  afterEach(() => clearMockTokenizer());
+
+  it("ends with the original 404 when every fallback is skipped", async () => {
+    const env = withTestChutesModelEnv({
+      ANALYSIS_PROVIDER: "chutes",
+      LLM_LIVE_ENABLED: "true",
+      CHUTES_API_KEY: "test-key",
+    });
+    const plan = planWith(["A-TEE", "B-TEE", "C-TEE"]);
+    const posts: string[] = [];
+    let refreshCalls = 0;
+    let prepareCalls = 0;
+    await assert.rejects(
+      () =>
+        requestChutesCompletionWithFallbacks({
+          primaryConfig: prepared("A-TEE", env).config,
+          plan,
+          initialAttempt: prepared("A-TEE", env),
+          prepareFallback: async () => {
+            prepareCalls += 1;
+            return null;
+          },
+          refreshPlan: async () => {
+            refreshCalls += 1;
+            return planWith(["B-TEE", "C-TEE"]);
+          },
+          transport: {
+            async post(_url, request) {
+              posts.push(JSON.parse(request.body).model as string);
+              return { status: 404, bodyText: "missing" };
+            },
+          },
+          env,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof LlmCallError);
+        assert.equal(err.httpStatus, 404);
+        assert.deepEqual(err.llmModelAttempts, [
+          { modelId: "A-TEE", kind: "sent" },
+          { modelId: "B-TEE", kind: "skipped" },
+          { modelId: "C-TEE", kind: "skipped" },
+        ]);
+        return true;
+      },
+    );
+    assert.deepEqual(posts, ["A-TEE"]);
+    assert.equal(refreshCalls, 1);
+    assert.equal(prepareCalls, 2);
+  });
+
+  it("ends the same way when refresh returns only models that are then skipped", async () => {
+    const env = withTestChutesModelEnv({
+      ANALYSIS_PROVIDER: "chutes",
+      LLM_LIVE_ENABLED: "true",
+      CHUTES_API_KEY: "test-key",
+    });
+    const plan = planWith(["A-TEE", "B-TEE", "C-TEE"]);
+    const posts: string[] = [];
+    let refreshCalls = 0;
+    await assert.rejects(
+      () =>
+        requestChutesCompletionWithFallbacks({
+          primaryConfig: prepared("A-TEE", env).config,
+          plan,
+          initialAttempt: prepared("A-TEE", env),
+          prepareFallback: async () => null,
+          refreshPlan: async (exclude) => {
+            refreshCalls += 1;
+            assert.deepEqual(exclude, ["A-TEE"]);
+            return planWith(["B-TEE", "C-TEE"]);
+          },
+          transport: {
+            async post(_url, request) {
+              posts.push(JSON.parse(request.body).model as string);
+              return { status: 404, bodyText: "missing" };
+            },
+          },
+          env,
+        }),
+      (err: unknown) => err instanceof LlmCallError,
+    );
+    assert.deepEqual(posts, ["A-TEE"]);
+    assert.equal(refreshCalls, 1);
+  });
+
+  it("records B skipped and succeeds on C", async () => {
+    const env = withTestChutesModelEnv({
+      ANALYSIS_PROVIDER: "chutes",
+      LLM_LIVE_ENABLED: "true",
+      CHUTES_API_KEY: "test-key",
+    });
+    const plan = planWith(["A-TEE", "B-TEE", "C-TEE"]);
+    const posts: string[] = [];
+    const result = await requestChutesCompletionWithFallbacks({
+      primaryConfig: prepared("A-TEE", env).config,
+      plan,
+      initialAttempt: prepared("A-TEE", env),
+      prepareFallback: async (model) =>
+        model.id === "B-TEE" ? null : prepared(model.id, env),
+      refreshPlan: async () => planWith(["B-TEE", "C-TEE"]),
+      transport: {
+        async post(_url, request) {
+          const model = JSON.parse(request.body).model as string;
+          posts.push(model);
+          if (model === "A-TEE") {
+            return { status: 404, bodyText: "missing" };
+          }
+          return {
+            status: 200,
+            bodyText: JSON.stringify({
+              choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+          };
+        },
+      },
+      env,
+    });
+    assert.deepEqual(posts, ["A-TEE", "C-TEE"]);
+    assert.equal(result.modelId, "C-TEE");
+    assert.deepEqual(result.modelAttempts, [
+      { modelId: "A-TEE", kind: "sent" },
+      { modelId: "B-TEE", kind: "skipped" },
+      { modelId: "C-TEE", kind: "sent" },
+    ]);
+  });
+
+  it("mutation: fallbackCandidates must exclude skipped models", () => {
+    const plan = planWith(["A-TEE", "B-TEE"]);
+    const excluded = new Set(["A-TEE", "B-TEE"]);
+    assert.deepEqual(fallbackCandidates(plan, excluded), []);
+    const broken = fallbackCandidates(plan, new Set(["A-TEE"]));
+    assert.equal(broken.length, 1);
+    assert.equal(broken[0]?.model.id, "B-TEE");
+  });
+});

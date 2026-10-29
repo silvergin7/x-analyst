@@ -1,4 +1,5 @@
 import { planAnalysisInput } from "./analyze/analysisInput.js";
+import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import { fitAnalysisInputToContextWindow } from "./analyze/fitContextWindow.js";
 import { buildChatMessages, buildChutesRequestBody, estimateRequestBudget } from "./analyze/llmPrompt.js";
 import { classificationOutputTokenCeiling } from "./analyze/outputBudget.js";
@@ -8,7 +9,7 @@ import {
   modestPreflightPosts,
 } from "./analyze/preflightPostShapes.js";
 import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "./config/desearchSettings.js";
-import { PRICED_LLM_MODEL } from "./config/llmSettings.js";
+import { LLM_RUN_BUDGET_USD } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
 import {
   describeDesearchCountOnWire,
@@ -27,6 +28,9 @@ function chutesEstimateForPosts(input: {
   question: string;
   referenceDate: string;
   env: NodeJS.ProcessEnv;
+  modelId: string;
+  contextLengthTokens: number;
+  pricing: { promptUsdPerMillion: number; completionUsdPerMillion: number };
 }): number {
   const planned = planAnalysisInput([...input.posts], input.handle);
   const fitted = fitAnalysisInputToContextWindow(planned, {
@@ -34,15 +38,17 @@ function chutesEstimateForPosts(input: {
     referenceDate: input.referenceDate,
     postSource: "desearch",
     env: input.env,
+    modelId: input.modelId,
+    contextLengthTokens: input.contextLengthTokens,
   });
   const aliases = postAliases(fitted.sent).map((item) => item.alias);
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
-    PRICED_LLM_MODEL,
+    input.modelId,
     classificationOutputTokenCeiling(fitted.sent.length, input.env),
     aliases,
   );
-  return estimateRequestBudget(body, input.env).estimatedUsd;
+  return estimateRequestBudget(body, input.env, input.pricing).estimatedUsd;
 }
 
 export function chutesWorstCaseEstimateUsd(input: {
@@ -51,7 +57,9 @@ export function chutesWorstCaseEstimateUsd(input: {
   handles: readonly string[];
   maxRetrievedPostsPerHandle: number;
   env: NodeJS.ProcessEnv;
+  chutesModelPlan: ChutesModelPlan;
 }): number {
+  const primary = input.chutesModelPlan.primary.model;
   let total = 0;
   for (const handle of input.handles) {
     const modestUsd = chutesEstimateForPosts({
@@ -60,6 +68,9 @@ export function chutesWorstCaseEstimateUsd(input: {
       question: input.question,
       referenceDate: input.referenceDate,
       env: input.env,
+      modelId: primary.id,
+      contextLengthTokens: primary.contextLength,
+      pricing: primary.pricing,
     });
     const longUsd = chutesEstimateForPosts({
       posts: longPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
@@ -67,20 +78,28 @@ export function chutesWorstCaseEstimateUsd(input: {
       question: input.question,
       referenceDate: input.referenceDate,
       env: input.env,
+      modelId: primary.id,
+      contextLengthTokens: primary.contextLength,
+      pricing: primary.pricing,
     });
     total += Math.max(modestUsd, longUsd);
   }
   return total;
 }
 
+function formatFallbackLine(plan: ChutesModelPlan): string {
+  if (plan.fallbacks.length === 0) return "Chutes fallbacks: (none)";
+  return `Chutes fallbacks: ${plan.fallbacks.map((item) => item.model.id).join(", ")}`;
+}
+
 export function buildAnalyzePreflightLines(input: {
   handles: readonly string[];
   question: string;
   referenceDate: string;
-  model: string;
   replay: boolean;
   offline: boolean;
   env: NodeJS.ProcessEnv;
+  chutesModelPlan?: ChutesModelPlan;
 }): string[] {
   const mode = { offline: input.offline, replay: input.replay };
   const questionLine = input.question || DEFAULT_QUESTION;
@@ -95,6 +114,11 @@ export function buildAnalyzePreflightLines(input: {
       "Desearch: not used (offline)",
       "Chutes: not used (offline)",
     ];
+  }
+
+  const plan = input.chutesModelPlan;
+  if (plan === undefined) {
+    throw new Error("Chutes model plan is required for live preflight");
   }
 
   const sample = sampleDesearchRequest();
@@ -118,18 +142,30 @@ export function buildAnalyzePreflightLines(input: {
     `Analysis reference date: ${input.referenceDate}`,
   ];
 
+  if (plan.skippedCatalogEntries > 0) {
+    lines.push(
+      `Chutes catalog: ${plan.skippedCatalogEntries} entries skipped (unpriced or incomplete)`,
+    );
+  }
+
+  const primary = plan.primary;
+  lines.push(
+    "Chutes: one request per handle (automatic model selection)",
+    `Chutes model: ${primary.model.id} (rank ${primary.rank}, worst-case $${primary.worstCaseUsdPerHandle.toFixed(6)} per handle)`,
+    formatFallbackLine(plan),
+    `Chutes model prior valid report: ${plan.priorValidReport ? "yes" : "no"}`,
+  );
+
   if (input.replay) {
     lines.push(
       "DESEARCH_MAX_REQUESTS_PER_RUN: not required for replay",
       "DESEARCH_MAX_REQUESTS_PER_HANDLE: not required for replay",
-      `Chutes: one request per handle; model ${input.model}`,
       "Desearch: not used (replay), $0.000000",
     );
   } else {
     lines.push(
       `DESEARCH_MAX_REQUESTS_PER_RUN: ${runBudget}`,
       `DESEARCH_MAX_REQUESTS_PER_HANDLE: ${perHandleCap ?? "(unset)"}`,
-      `Chutes: one request per handle; model ${input.model}`,
       describeDesearchCountOnWire(sample),
       `Desearch worst-case list-price estimate (not a charge): usage_count ${desearch!.usageCount}, list_price_usd ${desearch!.listPriceUsd.toFixed(6)} (${desearch!.basis})`,
     );
@@ -143,21 +179,42 @@ export function buildAnalyzePreflightLines(input: {
       ? desearch.postsPerRequest * requestsPerHandle
       : 55,
     env: input.env,
+    chutesModelPlan: plan,
   });
+  const handleWord = input.handles.length === 1 ? "handle" : "handles";
   lines.push(
-    `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} summed across handles`,
+    `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} across ${input.handles.length} ${handleWord}`,
+  );
+  lines.push(
+    `Chutes per-run worst-case local cap: $${LLM_RUN_BUDGET_USD.toFixed(2)} (planned $${chutesEstimate.toFixed(6)} across ${input.handles.length} ${handleWord})`,
   );
   return lines;
+}
+
+export function assertPrimaryRunBudgetPreflight(input: {
+  question: string;
+  referenceDate: string;
+  handles: readonly string[];
+  maxRetrievedPostsPerHandle: number;
+  env: NodeJS.ProcessEnv;
+  chutesModelPlan: ChutesModelPlan;
+}): void {
+  const total = chutesWorstCaseEstimateUsd(input);
+  if (total > LLM_RUN_BUDGET_USD) {
+    throw new Error(
+      `Primary model worst-case estimate $${total.toFixed(6)} across ${input.handles.length} handle(s) exceeds the $${LLM_RUN_BUDGET_USD.toFixed(2)} run budget`,
+    );
+  }
 }
 
 export function printAnalyzePreflight(input: {
   handles: readonly string[];
   question: string;
   referenceDate: string;
-  model: string;
   replay: boolean;
   offline: boolean;
   env: NodeJS.ProcessEnv;
+  chutesModelPlan?: ChutesModelPlan;
 }): void {
   process.stdout.write(`${buildAnalyzePreflightLines(input).join("\n")}\n`);
 }

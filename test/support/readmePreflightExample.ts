@@ -1,13 +1,15 @@
 import { buildAnalyzePreflightLines } from "../../src/analyzePreflight.js";
 import { DESEARCH_PLACEHOLDER_KEY } from "../../src/config/desearchSettings.js";
-import { LLM_API_KEY_PLACEHOLDER, PRICED_LLM_MODEL } from "../../src/config/llmSettings.js";
+import { LLM_API_KEY_PLACEHOLDER } from "../../src/config/llmSettings.js";
 import { DEFAULT_QUESTION } from "../../src/config.js";
+import { withTestChutesModelEnv } from "./chutesTestModel.js";
+import { testChutesModelPlan } from "./testChutesModelPlan.js";
 
 export const README_PREFLIGHT_REFERENCE_DATE = "2026-10-10";
 export const README_PREFLIGHT_HANDLE = "bullmacro";
 
 export function readmePreflightExampleEnv(): NodeJS.ProcessEnv {
-  return {
+  return withTestChutesModelEnv({
     POSTS_PROVIDER: "desearch",
     DESEARCH_API_KEY: DESEARCH_PLACEHOLDER_KEY,
     DESEARCH_LIVE_ENABLED: "true",
@@ -16,8 +18,7 @@ export function readmePreflightExampleEnv(): NodeJS.ProcessEnv {
     ANALYSIS_PROVIDER: "chutes",
     LLM_LIVE_ENABLED: "true",
     CHUTES_API_KEY: LLM_API_KEY_PLACEHOLDER,
-    LLM_MODEL: PRICED_LLM_MODEL,
-  };
+  });
 }
 
 export function readmePreflightExampleLines(): string[] {
@@ -25,10 +26,10 @@ export function readmePreflightExampleLines(): string[] {
     handles: [README_PREFLIGHT_HANDLE],
     question: DEFAULT_QUESTION,
     referenceDate: README_PREFLIGHT_REFERENCE_DATE,
-    model: PRICED_LLM_MODEL,
     replay: false,
     offline: false,
     env: readmePreflightExampleEnv(),
+    chutesModelPlan: testChutesModelPlan(),
   });
 }
 

@@ -1,6 +1,8 @@
 # Saved post slices
 data/slices/
 data/reports/
+data/models/
+data/tokenizers/
 
 .test-env.json
 .test-data-dir-snapshot.json

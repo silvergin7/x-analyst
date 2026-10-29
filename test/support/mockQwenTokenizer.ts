@@ -1,18 +1,16 @@
-import { setQwenTokenizerRuntimeForTests, type QwenTokenizerRuntime } from "../../src/analyze/qwenTokenizerRuntime.js";
+import { setTokenizerRuntimeForTests } from "../../src/analyze/tokenBudget.js";
+import type { TokenizerRuntime } from "../../src/analyze/tokenizerRuntime.js";
 
 export function installByteQuarterMockTokenizer(): void {
-  const runtime: QwenTokenizerRuntime = {
+  const runtime: TokenizerRuntime = {
     encode(text: string) {
       const n = Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4));
       return Array.from({ length: n }, (_, index) => index);
     },
-    renderChat(messages) {
-      return messages.map((message) => `${message.role}\n${message.content}`).join("\n\n");
-    },
   };
-  setQwenTokenizerRuntimeForTests(runtime);
+  setTokenizerRuntimeForTests(runtime);
 }
 
 export function clearMockTokenizer(): void {
-  setQwenTokenizerRuntimeForTests(null);
+  setTokenizerRuntimeForTests(null);
 }

@@ -4,7 +4,7 @@ This page describes how X Analyst builds a Chutes request and the local checks t
 
 ## Token counting
 
-For the priced model (`Qwen/Qwen3-32B-TEE`), input size uses the pinned Qwen3 tokenizer and the official chat template from `tokenizer_config.json` (see [tokenizer.md](tokenizer.md)).
+For live Chutes runs, input size uses the selected model’s cached Hugging Face `tokenizer.json` (see [chutes-model-selection.md](chutes-model-selection.md)).
 
 The local upper bound includes:
 
@@ -16,7 +16,7 @@ Output side uses a pessimistic JSON byte ceiling plus tokenized empty thinking w
 
 ## Dollar check before each Chutes call
 
-Before HTTP, the app compares the pessimistic estimate to **$0.05** (`LLM_CALL_BUDGET_USD` in `src/config/llmSettings.ts`). Published rates used in that math: **$0.104** per million input tokens and **$0.416** per million output tokens for the priced model.
+Before HTTP, the app compares the pessimistic estimate to **$0.20** per call (`LLM_CALL_BUDGET_USD`) and **$1.00** committed worst case per run (`LLM_RUN_BUDGET_USD`). Rates come from the selected catalog model. Output budgeting reserves **16,000** thinking tokens (`LLM_THINKING_ALLOWANCE_TOKENS`).
 
 Provider-reported `cost_usd` or token usage from a response is shown separately and is not replaced by the local estimate.
 

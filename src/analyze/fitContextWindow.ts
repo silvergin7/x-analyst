@@ -1,4 +1,4 @@
-import { PRICED_LLM_MODEL, fitsModelContextWindow } from "../config/llmSettings.js";
+import { fitsModelContextWindow, loadLlmRuntimeConfig } from "../config/llmSettings.js";
 import type { PostSource } from "../types.js";
 import {
   BEYOND_CONTEXT_WINDOW_REASON,
@@ -7,6 +7,8 @@ import {
   type SentPost,
 } from "./analysisInput.js";
 import { classificationOutputTokenCeiling } from "./outputBudget.js";
+import type { TokenizerRuntime } from "./tokenizerRuntime.js";
+import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
 import { postAliases } from "./postAliases.js";
 import {
   buildChatMessages,
@@ -19,19 +21,44 @@ export interface ContextWindowFitInput {
   referenceDate: string;
   postSource: PostSource;
   env: NodeJS.ProcessEnv;
+  modelId?: string;
+  contextLengthTokens?: number;
+  tokenizerJsonPath?: string;
+  tokenizerRuntime?: TokenizerRuntime;
+}
+
+function resolveModelContext(input: ContextWindowFitInput): {
+  modelId: string;
+  contextLengthTokens: number;
+} {
+  if (input.modelId !== undefined && input.contextLengthTokens !== undefined) {
+    return { modelId: input.modelId, contextLengthTokens: input.contextLengthTokens };
+  }
+  const llm = loadLlmRuntimeConfig(input.env);
+  return { modelId: llm.model, contextLengthTokens: llm.contextLengthTokens };
+}
+
+function resolveTokenizerRuntime(input: ContextWindowFitInput): TokenizerRuntime | undefined {
+  if (input.tokenizerRuntime !== undefined) return input.tokenizerRuntime;
+  if (input.tokenizerJsonPath !== undefined) {
+    return loadTokenizerRuntimeFromJsonPath(input.tokenizerJsonPath);
+  }
+  return undefined;
 }
 
 function estimateFits(sent: readonly SentPost[], input: ContextWindowFitInput): boolean {
+  const { modelId, contextLengthTokens } = resolveModelContext(input);
+  const runtime = resolveTokenizerRuntime(input);
   const aliases = postAliases(sent).map((item) => item.alias);
-  const maxTokens = classificationOutputTokenCeiling(sent.length, input.env);
+  const maxTokens = classificationOutputTokenCeiling(sent.length, input.env, runtime);
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, [...sent], input.referenceDate, input.postSource),
-    PRICED_LLM_MODEL,
+    modelId,
     maxTokens,
     aliases,
   );
-  const estimate = estimateRequestBudget(body, input.env);
-  return fitsModelContextWindow(estimate.inputTokensUpper, maxTokens);
+  const estimate = estimateRequestBudget(body, input.env, undefined, runtime);
+  return fitsModelContextWindow(contextLengthTokens, estimate.inputTokensUpper, maxTokens);
 }
 
 /**

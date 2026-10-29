@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { buildAnalyzePreflightLines } from "../src/analyzePreflight.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
+import { withTestChutesModelEnv } from "./support/chutesTestModel.js";
+import { testChutesModelPlan } from "./support/testChutesModelPlan.js";
 
 const baseInput = {
   handles: ["bullmacro"],
   question: "What is the outlook?",
   referenceDate: "2026-10-10",
-  model: "Qwen/Qwen3-32B-TEE",
-  env: {
+  env: withTestChutesModelEnv({
     DESEARCH_MAX_REQUESTS_PER_RUN: "5",
     DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
-  } as NodeJS.ProcessEnv,
+  }),
+  chutesModelPlan: testChutesModelPlan(),
 };
 
 describe("analyze preflight lines", () => {

@@ -4,13 +4,22 @@ import path from "node:path";
 import { parseCliArgs } from "./cliArgs.js";
 import { AnalystListError, analystHandlesFromList, loadAnalystList } from "./config/analystList.js";
 import {
-  loadLlmRuntimeConfig,
   readInputMaxCharsStrict,
   utcReferenceDate,
 } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
-import { printAnalyzePreflight } from "./analyzePreflight.js";
-import { liveTokenizerPreflightMessage } from "./analyze/qwenTokenizerPins.js";
+import { assertPrimaryRunBudgetPreflight, printAnalyzePreflight } from "./analyzePreflight.js";
+import { desearchWorstCaseListPriceUsd, sampleDesearchRequest } from "./runtime/desearchPreflight.js";
+import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "./config/desearchSettings.js";
+import { readAnalyzeCliTransportDeps } from "./analyze/analyzeCliDeps.js";
+import { createFetchChutesCatalogTransport } from "./analyze/chutesCatalogTransport.js";
+import {
+  buildChutesModelPlanForRun,
+  ChutesPreflightPlanError,
+} from "./analyze/buildChutesModelPlanForRun.js";
+import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
+import { forbiddenTestFixtureEnvMessage } from "./analyze/testFixtureEnvGuard.js";
+import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import { validateLiveDesearchRequestLimits } from "./config/desearchSettings.js";
 import { serializeRunReportResult } from "./format/runReportJson.js";
 import { formatBudgetEstimate } from "./format/llmFixtureReport.js";
@@ -121,21 +130,27 @@ async function main(): Promise<void> {
 
   const referenceDate = options.asOf ?? utcReferenceDate();
   const question = options.questionFlagSeen ? options.question : DEFAULT_QUESTION;
-  const llm = loadLlmRuntimeConfig(runEnv);
+
+  let chutesModelPlan: ChutesModelPlan | undefined;
+  const ownerForcedModelId = (() => {
+    const raw = runEnv.LLM_MODEL?.trim();
+    return raw === undefined || raw === "" ? undefined : raw;
+  })();
 
   if (!options.offline) {
+    const fixtureMessage = forbiddenTestFixtureEnvMessage(runEnv);
+    if (fixtureMessage !== null) {
+      process.stderr.write(`Preflight error: ${fixtureMessage}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const transportDeps = readAnalyzeCliTransportDeps();
     const urlOverrides = validateProviderOverrides(runEnv, {
       offline: false,
       replay: options.replayPath !== undefined,
     });
     if (!urlOverrides.ok) {
       process.stderr.write(`Preflight error: ${urlOverrides.message}\n`);
-      process.exitCode = 1;
-      return;
-    }
-    const tokenizerMessage = liveTokenizerPreflightMessage(runEnv);
-    if (tokenizerMessage !== null) {
-      process.stderr.write(`${tokenizerMessage}\n`);
       process.exitCode = 1;
       return;
     }
@@ -149,6 +164,25 @@ async function main(): Promise<void> {
         return;
       }
     }
+    try {
+      chutesModelPlan = await buildChutesModelPlanForRun({
+        env: runEnv,
+        handles,
+        question,
+        referenceDate,
+        replay: options.replayPath !== undefined,
+        catalogTransport: transportDeps.catalogTransport ?? createFetchChutesCatalogTransport(),
+        hfTransport: transportDeps.hfTransport ?? createHuggingFaceModelInfoTransport(),
+        hfDownloadTransport: transportDeps.hfDownloadTransport,
+        ownerForcedModelId,
+      });
+    } catch (err) {
+      const message =
+        err instanceof ChutesPreflightPlanError ? err.message : "Chutes preflight failed";
+      process.stderr.write(`Preflight error: ${message}\n`);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   const inputMaxChars = readInputMaxCharsStrict(runEnv);
@@ -158,14 +192,48 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (chutesModelPlan !== undefined) {
+    const replayRun = options.replayPath !== undefined;
+    const runBudget = loadDesearchRequestBudget(runEnv);
+    const perHandleCap = loadDesearchMaxRequestsPerHandle(runEnv);
+    const requestsPerHandle =
+      perHandleCap === undefined ? runBudget : Math.min(perHandleCap, runBudget);
+    const sample = sampleDesearchRequest();
+    const desearch = replayRun
+      ? null
+      : desearchWorstCaseListPriceUsd({
+          handles: handles.length,
+          requestsPerHandle,
+          sampleRequest: sample,
+        });
+    const maxRetrievedPostsPerHandle = desearch
+      ? desearch.postsPerRequest * requestsPerHandle
+      : 55;
+    try {
+      assertPrimaryRunBudgetPreflight({
+        question,
+        referenceDate,
+        handles,
+        maxRetrievedPostsPerHandle,
+        env: runEnv,
+        chutesModelPlan,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Chutes run budget preflight failed";
+      process.stderr.write(`Preflight error: ${message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   printAnalyzePreflight({
     handles,
     question,
     referenceDate,
-    model: llm.model,
     replay: options.replayPath !== undefined,
     offline: options.offline,
     env: runEnv,
+    chutesModelPlan,
   });
 
   const confirmed = await confirmProceed({
@@ -191,6 +259,8 @@ async function main(): Promise<void> {
         fresh: options.fresh,
         replayPath: options.replayPath,
         env: runEnv,
+        chutesModelPlan,
+        ownerForcedModelId,
         onEstimate: (estimate) => {
           process.stdout.write(`${formatBudgetEstimate(estimate)}\n`);
         },

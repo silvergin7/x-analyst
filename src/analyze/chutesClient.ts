@@ -1,12 +1,14 @@
 import {
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
-  LLM_CONTEXT_WINDOW_TOKENS,
   LLM_REQUEST_TIMEOUT_MS,
+  LLM_RUN_BUDGET_USD,
   fitsModelContextWindow,
   type LlmRuntimeConfig,
 } from "../config/llmSettings.js";
-import type { BudgetEstimate, ProviderTokenUsage } from "../types.js";
+import type { LlmRunSpendLedger } from "./llmRunSpendLedger.js";
+import type { TokenizerRuntime } from "./tokenizerRuntime.js";
+import type { BudgetEstimate, ChutesModelAttempt, ProviderTokenUsage } from "../types.js";
 import { stripLeadingEmptyThinkingBlock } from "./modelCompletionText.js";
 import {
   buildChutesRequestBody,
@@ -29,6 +31,8 @@ export class LlmCallError extends Error {
   readonly code: LlmFailureCode;
   readonly estimate?: BudgetEstimate;
   providerUsage: ProviderTokenUsage | null = null;
+  httpStatus?: number;
+  llmModelAttempts?: ChutesModelAttempt[];
 
   constructor(code: LlmFailureCode, message: string, estimate?: BudgetEstimate) {
     super(message);
@@ -98,7 +102,17 @@ function readUsage(value: unknown): ProviderTokenUsage | null {
   ) {
     return null;
   }
-  return { promptTokens, completionTokens, totalTokens };
+  const details = usage.completion_tokens_details;
+  let reasoningTokens: number | undefined;
+  if (details && typeof details === "object") {
+    const reasoning = (details as Record<string, unknown>).reasoning_tokens;
+    if (typeof reasoning === "number" && Number.isFinite(reasoning)) {
+      reasoningTokens = reasoning;
+    }
+  }
+  return reasoningTokens === undefined
+    ? { promptTokens, completionTokens, totalTokens }
+    : { promptTokens, completionTokens, totalTokens, reasoningTokens };
 }
 
 function failWithUsage(
@@ -181,6 +195,8 @@ export async function requestChutesCompletion(
   maxTokens: number,
   aliases: readonly string[],
   onEstimate?: (estimate: BudgetEstimate) => void,
+  runLedger?: LlmRunSpendLedger,
+  tokenizerRuntime?: TokenizerRuntime,
 ): Promise<ChutesCompletion> {
   if (!config.eligible) {
     throw new LlmCallError(
@@ -190,7 +206,7 @@ export async function requestChutesCompletion(
   }
 
   const requestBody = buildChutesRequestBody(messages, config.model, maxTokens, aliases);
-  const estimate = estimateRequestBudget(requestBody, env);
+  const estimate = estimateRequestBudget(requestBody, env, undefined, tokenizerRuntime);
   if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
     throw new LlmCallError(
       "budget",
@@ -198,8 +214,21 @@ export async function requestChutesCompletion(
       estimate,
     );
   }
-  if (!fitsModelContextWindow(estimate.inputTokensUpper, requestBody.max_tokens)) {
-    const budget = LLM_CONTEXT_WINDOW_TOKENS - LLM_CONTEXT_SAFETY_MARGIN_TOKENS;
+  if (runLedger !== undefined && runLedger.wouldExceedRunBudget(estimate.estimatedUsd)) {
+    throw new LlmCallError(
+      "budget",
+      `Pessimistic estimate $${estimate.estimatedUsd.toFixed(6)} would exceed the $${LLM_RUN_BUDGET_USD.toFixed(2)} run budget (already committed $${runLedger.totalCommittedUsd.toFixed(6)})`,
+      estimate,
+    );
+  }
+  if (
+    !fitsModelContextWindow(
+      config.contextLengthTokens,
+      estimate.inputTokensUpper,
+      requestBody.max_tokens,
+    )
+  ) {
+    const budget = config.contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS;
     throw new LlmCallError(
       "context_window",
       `Input ceiling ${estimate.inputTokensUpper} plus max_tokens ${requestBody.max_tokens} exceeds the context window budget of ${budget}`,
@@ -208,6 +237,7 @@ export async function requestChutesCompletion(
   }
 
   onEstimate?.(estimate);
+  runLedger?.recordCommittedEstimate(estimate.estimatedUsd);
   const signal = AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS);
   let response: ChutesTransportResponse;
   try {
@@ -227,11 +257,13 @@ export async function requestChutesCompletion(
   }
 
   if (response.status !== 200) {
-    throw new LlmCallError(
+    const error = new LlmCallError(
       "http",
       `Chutes returned HTTP ${response.status}`,
       estimate,
     );
+    error.httpStatus = response.status;
+    throw error;
   }
 
   let parsed: unknown;

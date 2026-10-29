@@ -3,6 +3,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import { reportFitShape } from "../src/analyze/fitBindingReport.js";
 import type { Post } from "../src/types.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
+import { withTestChutesModelEnv } from "./support/chutesTestModel.js";
 
 const question = "What is each analyst's current market outlook?";
 const referenceDate = "2026-10-10";
@@ -20,7 +21,10 @@ function modestPosts(count: number): Post[] {
 }
 
 describe("fit binding report", () => {
-  beforeEach(() => installByteQuarterMockTokenizer());
+  beforeEach(() => {
+    installByteQuarterMockTokenizer();
+    withTestChutesModelEnv(process.env);
+  });
   afterEach(() => clearMockTokenizer());
 
   it("records none when every post is sent and the context window fits", () => {
@@ -29,7 +33,7 @@ describe("fit binding report", () => {
       handle: "analyst",
       question,
       referenceDate,
-      env: process.env,
+      env: withTestChutesModelEnv(process.env),
     });
     assert.equal(report.postsSent, 12);
     assert.equal(report.bindingLimit, "none");

@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
 import { describe, it } from "node:test";
-import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
 import { saveSlice, outcomesForSlice } from "../src/runtime/savedSlice.js";
 import {
   chutesLiveEnvLooksDisabled,
@@ -15,9 +12,7 @@ import {
 import type { FetchOutcome } from "../src/types.js";
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
-const vendorReady =
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`) &&
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer_config.json`);
+import { spawnAnalyzeWithFixtureDeps } from "./support/spawnAnalyzeWithFixtureDeps.js";
 
 function chutesOnlyEnvLines(extra: string[] = []): string[] {
   return [
@@ -27,20 +22,6 @@ function chutesOnlyEnvLines(extra: string[] = []): string[] {
     "CHUTES_CHAT_COMPLETIONS_URL=http://127.0.0.1:9/v1/chat/completions",
     ...extra,
   ];
-}
-
-function minimalShellEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
-    PATH: process.env.PATH ?? "",
-    HOME: process.env.HOME ?? tmpdir(),
-    X_ANALYST_SLICE_DIR:
-      process.env.X_ANALYST_SLICE_DIR ??
-      mkdtempSync(path.join(tmpdir(), "x-analyst-cli-slices-")),
-    X_ANALYST_REPORTS_DIR:
-      process.env.X_ANALYST_REPORTS_DIR ??
-      mkdtempSync(path.join(tmpdir(), "x-analyst-cli-reports-")),
-    ...extra,
-  };
 }
 
 function sliceForBullmacro(): string {
@@ -109,33 +90,22 @@ describe("replay run env", () => {
 });
 
 describe("npm run analyze replay gate", () => {
-  it("passes the replay gate with chutes-only env and reaches preflight", { skip: !vendorReady }, () => {
+  it("passes the replay gate with chutes-only env and reaches preflight", () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-replay-gate-"));
     const envFile = path.join(envDir, ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
     const slicePath = sliceForBullmacro();
-    const result = spawnSync(
-      "npm",
-      [
-        "run",
-        "analyze",
-        "--",
-        "--yes",
-        "--handles",
-        "bullmacro",
-        "--replay",
-        slicePath,
-        "--as-of",
-        "2026-11-02",
-        "--env-file",
-        envFile,
-      ],
-      {
-        cwd: repoRoot,
-        env: minimalShellEnv(),
-        encoding: "utf8",
-      },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--as-of",
+      "2026-11-02",
+      "--env-file",
+      envFile,
+    ]);
     assert.doesNotMatch(
       result.stderr + result.stdout,
       /Live providers are not fully enabled/,
@@ -152,24 +122,13 @@ describe("npm run analyze replay gate", () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-live-desearch-missing-"));
     const envFile = path.join(envDir, ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
-    const result = spawnSync(
-      "npm",
-      [
-        "run",
-        "analyze",
-        "--",
-        "--yes",
-        "--handles",
-        "bullmacro",
-        "--env-file",
-        envFile,
-      ],
-      {
-        cwd: repoRoot,
-        env: minimalShellEnv(),
-        encoding: "utf8",
-      },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--env-file",
+      envFile,
+    ]);
     assert.notEqual(result.status, 0);
     assert.match(
       result.stderr + result.stdout,
@@ -177,7 +136,7 @@ describe("npm run analyze replay gate", () => {
     );
   });
 
-  it("replays a slice with retrieval_failed without calling Desearch", { skip: !vendorReady }, () => {
+  it("replays a slice with retrieval_failed without calling Desearch", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-replay-failed-"));
     const slicePath = saveSlice(dir, {
       version: 1,
@@ -199,29 +158,22 @@ describe("npm run analyze replay gate", () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-replay-failed-env-"));
     const envFile = path.join(envDir, ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
-    const result = spawnSync(
-      "npm",
-      [
-        "run",
-        "analyze",
-        "--",
-        "--yes",
-        "--handles",
-        "bullmacro",
-        "--replay",
-        slicePath,
-        "--as-of",
-        "2026-11-02",
-        "--env-file",
-        envFile,
-      ],
-      { cwd: repoRoot, env: minimalShellEnv(), encoding: "utf8" },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--as-of",
+      "2026-11-02",
+      "--env-file",
+      envFile,
+    ]);
     assert.equal(result.status, 1);
     assert.match(result.stdout, /retrieval failed/i);
   });
 
-  it("does not require Desearch keys in the env file for replay", { skip: !vendorReady }, () => {
+  it("does not require Desearch keys in the env file for replay", () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-replay-no-desearch-"));
     const envFile = path.join(envDir, ".env");
     writeFileSync(
@@ -234,28 +186,17 @@ describe("npm run analyze replay gate", () => {
       "utf8",
     );
     const slicePath = sliceForBullmacro();
-    const result = spawnSync(
-      "npm",
-      [
-        "run",
-        "analyze",
-        "--",
-        "--yes",
-        "--handles",
-        "bullmacro",
-        "--replay",
-        slicePath,
-        "--as-of",
-        "2026-11-02",
-        "--env-file",
-        envFile,
-      ],
-      {
-        cwd: repoRoot,
-        env: minimalShellEnv(),
-        encoding: "utf8",
-      },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--as-of",
+      "2026-11-02",
+      "--env-file",
+      envFile,
+    ]);
     assert.doesNotMatch(
       result.stderr + result.stdout,
       /Live providers are not fully enabled/,
