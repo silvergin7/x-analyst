@@ -26,7 +26,7 @@ Desearch (Bittensor Subnet 22) and Chutes (Bittensor Subnet 64) are the live dat
 | Lookback window | 30 days | `src/config.ts` (`DEFAULT_LOOKBACK_DAYS`) |
 | Post text sent to the model | 20,000 characters | `src/config/llmSettings.ts` (`LLM_INPUT_MAX_CHARS`) |
 | Context safety margin | 1,024 tokens | `src/config/llmSettings.ts` (`LLM_CONTEXT_SAFETY_MARGIN_TOKENS`) |
-| Thinking allowance in budgets | 16,000 tokens | `src/config/llmSettings.ts` (`LLM_THINKING_ALLOWANCE_TOKENS`) |
+| Thinking allowance in budgets | 16,000 tokens, included in the sent `max_tokens` | `src/config/llmSettings.ts` (`LLM_THINKING_ALLOWANCE_TOKENS`) |
 | Chutes request timeout | 15 minutes, one attempt, no retry | `src/config/llmSettings.ts` (`LLM_REQUEST_TIMEOUT_MS`) |
 | Chutes model | Automatic from catalog | [docs/chutes-model-selection.md](docs/chutes-model-selection.md) |
 

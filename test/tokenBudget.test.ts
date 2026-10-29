@@ -8,6 +8,7 @@ import {
 import {
   LLM_TOKENIZER_CALIBRATION_FIXED,
   LLM_TOKENIZER_CALIBRATION_RATIO,
+  chutesRequestMaxTokens,
 } from "../src/config/llmSettings.js";
 import { TEST_CHUTES_MODEL_ID, withTestChutesModelEnv } from "./support/chutesTestModel.js";
 import { classificationOutputTokenCeiling } from "../src/analyze/outputBudget.js";
@@ -39,7 +40,7 @@ describe("token budget", () => {
     const body = buildChutesRequestBody(
       buildChatMessages("Question?", sent, "2026-10-10", "desearch"),
       TEST_CHUTES_MODEL_ID,
-      classificationOutputTokenCeiling(1, process.env),
+      chutesRequestMaxTokens(classificationOutputTokenCeiling(1, process.env)),
       ["p1"],
     );
     const counted = countRequestInputTokens(body, process.env);
@@ -56,7 +57,7 @@ describe("token budget", () => {
     const body = buildChutesRequestBody(
       buildChatMessages("Q?", [], "2026-10-10", "desearch"),
       TEST_CHUTES_MODEL_ID,
-      classificationOutputTokenCeiling(0, process.env),
+      chutesRequestMaxTokens(classificationOutputTokenCeiling(0, process.env)),
       [],
     );
     const counted = countRequestInputTokens(body, process.env);

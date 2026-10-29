@@ -9,7 +9,7 @@ import {
   modestPreflightPosts,
 } from "./analyze/preflightPostShapes.js";
 import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "./config/desearchSettings.js";
-import { LLM_RUN_BUDGET_USD } from "./config/llmSettings.js";
+import { LLM_RUN_BUDGET_USD, chutesRequestMaxTokens } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
 import {
   describeDesearchCountOnWire,
@@ -45,7 +45,7 @@ function chutesEstimateForPosts(input: {
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
     input.modelId,
-    classificationOutputTokenCeiling(fitted.sent.length, input.env),
+    chutesRequestMaxTokens(classificationOutputTokenCeiling(fitted.sent.length, input.env)),
     aliases,
   );
   return estimateRequestBudget(body, input.env, input.pricing).estimatedUsd;

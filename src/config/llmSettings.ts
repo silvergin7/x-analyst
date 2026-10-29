@@ -260,19 +260,19 @@ export function llmRuntimeConfigForChutesPlan(
   };
 }
 
-/** Completion footprint including the thinking allowance reserved in budgets. */
-export function completionTokensContextFootprint(maxTokens: number): number {
-  return maxTokens + LLM_THINKING_ALLOWANCE_TOKENS;
+/** Tokens sent as `max_tokens`: the JSON output ceiling plus the thinking allowance. */
+export function chutesRequestMaxTokens(outputCeiling: number): number {
+  return outputCeiling + LLM_THINKING_ALLOWANCE_TOKENS;
 }
 
-/** True when the input ceiling plus max_tokens fits in the context window minus the safety margin. */
+/** True when the input ceiling plus the sent `max_tokens` fits in the context window minus the safety margin. */
 export function fitsModelContextWindow(
   contextLengthTokens: number,
   inputTokensUpper: number,
   maxTokens: number,
 ): boolean {
   return (
-    inputTokensUpper + completionTokensContextFootprint(maxTokens) <=
+    inputTokensUpper + maxTokens <=
     contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS
   );
 }

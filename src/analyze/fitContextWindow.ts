@@ -1,4 +1,8 @@
-import { fitsModelContextWindow, loadLlmRuntimeConfig } from "../config/llmSettings.js";
+import {
+  chutesRequestMaxTokens,
+  fitsModelContextWindow,
+  loadLlmRuntimeConfig,
+} from "../config/llmSettings.js";
 import type { PostSource } from "../types.js";
 import {
   BEYOND_CONTEXT_WINDOW_REASON,
@@ -47,7 +51,9 @@ function estimateFits(sent: readonly SentPost[], input: ContextWindowFitInput): 
   const { modelId, contextLengthTokens } = resolveModelContext(input);
   const runtime = resolveTokenizerRuntime(input);
   const aliases = postAliases(sent).map((item) => item.alias);
-  const maxTokens = classificationOutputTokenCeiling(sent.length, input.env, runtime);
+  const maxTokens = chutesRequestMaxTokens(
+    classificationOutputTokenCeiling(sent.length, input.env, runtime),
+  );
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, [...sent], input.referenceDate, input.postSource),
     modelId,

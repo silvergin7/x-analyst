@@ -12,7 +12,11 @@ import {
 } from "./outputBudget.js";
 import { postAliases } from "./postAliases.js";
 import { countRequestInputTokens } from "./tokenBudget.js";
-import { fitsModelContextWindow, loadLlmRuntimeConfig } from "../config/llmSettings.js";
+import {
+  chutesRequestMaxTokens,
+  fitsModelContextWindow,
+  loadLlmRuntimeConfig,
+} from "../config/llmSettings.js";
 import type { Post } from "../types.js";
 
 export type FitBindingLimit =
@@ -82,7 +86,8 @@ export function reportFitShape(input: {
   });
   const llm = loadLlmRuntimeConfig(input.env);
   const aliases = postAliases(fitted.sent).map((item) => item.alias);
-  const maxTokens = classificationOutputTokenCeiling(fitted.sent.length, input.env);
+  const outputTokenCeiling = classificationOutputTokenCeiling(fitted.sent.length, input.env);
+  const maxTokens = chutesRequestMaxTokens(outputTokenCeiling);
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
     llm.model,
@@ -91,12 +96,11 @@ export function reportFitShape(input: {
   );
   const tokens = countRequestInputTokens(body, input.env);
   const outputJsonByteCeiling = classificationOutputJsonByteCeiling(fitted.sent.length);
-  const outputTokenCeiling = classificationOutputTokenCeiling(fitted.sent.length, input.env);
   const bindingLimit = bindingForPlan(
     planned,
     fitted,
     tokens.inputTokensUpper,
-    outputTokenCeiling,
+    maxTokens,
     llm.contextLengthTokens,
   );
   return {

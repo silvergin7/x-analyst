@@ -8,7 +8,7 @@ import {
   longPreflightPosts,
   modestPreflightPosts,
 } from "./preflightPostShapes.js";
-import { loadInputMaxChars } from "../config/llmSettings.js";
+import { chutesRequestMaxTokens, loadInputMaxChars } from "../config/llmSettings.js";
 import type { HandleTokenCeilings } from "./chutesModelEligibility.js";
 import { readTokenizerJsonPath } from "./tokenizerRuntimeEnv.js";
 import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
@@ -56,7 +56,7 @@ export function worstCaseHandleCeilings(input: {
     const body = buildChutesRequestBody(
       buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
       input.modelId,
-      outputCeiling,
+      chutesRequestMaxTokens(outputCeiling),
       aliases,
     );
     const counted = countRequestInputTokens(body, input.env, runtime);
