@@ -58,6 +58,13 @@ export type PostSource = "fixtures" | "desearch";
 
 export type AnalysisProviderLabel = "mock-rules" | "chutes";
 
+export type DesearchFailureCategory =
+  | "http_status"
+  | "timeout"
+  | "network"
+  | "invalid_json"
+  | "parse";
+
 /** Billing fields Desearch actually returned. Missing fields stay missing. */
 export interface DesearchBilling {
   costUsd?: number;
@@ -79,6 +86,10 @@ type FetchOutcomeShape =
       duplicatePostsRemoved?: number;
       /** Invalid items skipped inside Desearch responses, by reason code. */
       invalidPostsSkipped?: Record<string, number>;
+      /** Present when retrieval stopped on an error but partial posts were kept. */
+      failureCategory?: DesearchFailureCategory;
+      httpStatus?: number;
+      reason?: string;
     }
   | {
       status: "incomplete";
@@ -87,7 +98,14 @@ type FetchOutcomeShape =
     }
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }
-  | { status: "empty"; handle: string };
+  | { status: "empty"; handle: string }
+  | {
+      status: "retrieval_failed";
+      handle: string;
+      failureCategory: DesearchFailureCategory;
+      httpStatus?: number;
+      reason: string;
+    };
 
 export type FetchOutcome = FetchOutcomeShape & {
   billing?: DesearchBilling[];

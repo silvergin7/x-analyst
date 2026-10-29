@@ -14,11 +14,8 @@ import type {
   FetchStopReason,
 } from "../../types.js";
 import type { FetchWindow, PostsFetcher } from "../postsFetcher.js";
-import { DesearchPaginationError, fetchHandlePages } from "./fetchHandlePages.js";
-import {
-  DesearchRetrievalError,
-  type DesearchTransport,
-} from "./desearchTransport.js";
+import { fetchHandlePages } from "./fetchHandlePages.js";
+import type { DesearchTransport } from "./desearchTransport.js";
 
 function requestAllowance(
   runRemaining: number,
@@ -144,43 +141,38 @@ export class DesearchPostsFetcher implements PostsFetcher {
 
       const allowance = requestAllowance(requestBudgetRemaining, this.maxRequestsPerHandle);
 
-      let pageResult: Awaited<ReturnType<typeof fetchHandlePages>>;
-      try {
-        pageResult = await fetchHandlePages(
-          handle,
-          this.credential,
-          this.transport,
-          {
-            requestBudgetRemaining: allowance.allowed,
-            lookbackCutoffMs,
-            apiBase: this.apiBase,
-          },
-        );
-      } catch (err) {
-        const prior = outcomes.flatMap((outcome) => outcome.billing ?? []);
-        if (err instanceof DesearchRetrievalError) {
-          throw new DesearchRetrievalError(err.message, {
-            category: err.category,
-            status: err.status,
-            billing: [...prior, ...err.billing],
-          });
-        }
-        if (err instanceof DesearchPaginationError) {
-          throw new DesearchPaginationError(err.message, [...prior, ...err.billing]);
-        }
-        throw new DesearchRetrievalError("Retrieval failed unexpectedly.", {
-          category: "network",
-          billing: prior,
-        });
-      }
+      const pageResult = await fetchHandlePages(
+        handle,
+        this.credential,
+        this.transport,
+        {
+          requestBudgetRemaining: allowance.allowed,
+          lookbackCutoffMs,
+          apiBase: this.apiBase,
+        },
+      );
 
       requestBudgetRemaining -= pageResult.requestsUsed;
       const stoppedForRequests = pageResult.stopReason === "desearch_request_budget_exhausted";
       const requestLimit = requestLimitReason(allowance.binding);
       const fetchStopReason = limitStopReason(pageResult.stopReason, allowance.binding);
+      const halt = pageResult.retrievalHalt;
 
       if (pageResult.posts.length === 0) {
-        if (stoppedForRequests) {
+        if (halt !== undefined) {
+          outcomes.push(
+            withBilling(
+              {
+                status: "retrieval_failed",
+                handle,
+                failureCategory: halt.failureCategory,
+                ...(halt.httpStatus !== undefined ? { httpStatus: halt.httpStatus } : {}),
+                reason: halt.reason,
+              },
+              pageResult.billing,
+            ),
+          );
+        } else if (stoppedForRequests) {
           outcomes.push(
             withBilling(
               {
@@ -210,20 +202,27 @@ export class DesearchPostsFetcher implements PostsFetcher {
 
       const skipCounts = pageResult.invalidPostsSkipped;
       const hasSkips = Object.keys(skipCounts).length > 0;
+      const incompleteReason = stoppedForRequests
+        ? requestLimit
+        : pageResult.handleIncompleteReason;
       outcomes.push(
         withBilling(
           {
             status: "ok",
             handle,
             posts: pageResult.posts,
-            retrievalComplete:
-              !stoppedForRequests && pageResult.handleIncompleteReason === undefined,
-            incompleteReason: stoppedForRequests
-              ? requestLimit
-              : pageResult.handleIncompleteReason,
+            retrievalComplete: incompleteReason === undefined,
+            ...(incompleteReason !== undefined ? { incompleteReason } : {}),
             fetchStopReason,
             duplicatePostsRemoved: pageResult.duplicatesRemoved,
             ...(hasSkips ? { invalidPostsSkipped: skipCounts } : {}),
+            ...(halt !== undefined
+              ? {
+                  failureCategory: halt.failureCategory,
+                  ...(halt.httpStatus !== undefined ? { httpStatus: halt.httpStatus } : {}),
+                  reason: halt.reason,
+                }
+              : {}),
           },
           pageResult.billing,
         ),

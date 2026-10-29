@@ -14,7 +14,7 @@ Parsed in `src/cliArgs.ts` (analyze entry uses strict handle parsing and does no
 | `--fresh` | Skip the in-memory fetch cache and call Desearch again. Each `npm run analyze` starts a new process with an empty cache, so the first fetch in that run is the same with or without `--fresh`. The flag matters when the same Node process runs more than one fetch with the same cache key (see tests). |
 | `--replay path` | Analyze a saved slice file without calling Desearch. Requires only Chutes live settings in `.env` (not Desearch). |
 | `--output path` | JSON report path; default under `data/reports/` (or `X_ANALYST_REPORTS_DIR`). |
-| `--env-file path` | Env file to load for live runs (default `.env` in the repo root). |
+| `--env-file path` | Env file for live runs (default `.env` in the repo root). With `--offline`, an explicit path is loaded before mock overrides so you can test config gates without live providers. |
 
 Live runs load `.env` in code. Shell variables already set override values from the file.
 
@@ -61,7 +61,9 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 
 Live fetch uses **GET** `https://api.desearch.ai/twitter/user/posts` (or `DESEARCH_API_BASE`) with query parameters **`username`** and optional **`cursor`**. The builder does **not** send **`count`** (`src/fetch/desearch/buildRequest.ts`).
 
-Pagination stops on lookback, request budgets, or no further cursor. Every valid post in a paid response is kept; duplicate IDs are removed. Items that fail field checks are skipped and counted per handle (`invalidPostsSkipped`). A page that returns items but none of them valid stops that handle as incomplete (`desearch_page_no_valid_posts`).
+Pagination stops on lookback, request budgets, or no further cursor. Every valid post in a paid response is kept; duplicate IDs are removed. Items that fail field checks are skipped and counted per handle (`invalidPostsSkipped`). A page that returns items but none of them valid stops that handle as incomplete (`desearch_page_no_valid_posts`). A Desearch error on the first page for a handle is recorded as `retrieval_failed` and other handles still run; a later-page error keeps partial posts on an **`ok`** outcome with `incompleteReason: desearch_retrieval_interrupted`, plus `failureCategory`, optional `httpStatus`, and `reason` describing the halt. Slices are saved whenever a fetch completes, including when some handles failed.
+
+**CLI exit code (fetch):** exit **1** when any handle is `retrieval_failed`, `incomplete` with `desearch_page_no_valid_posts`, or **`ok`** with `incompleteReason` of `desearch_retrieval_interrupted` or `desearch_page_no_valid_posts`. Run or per-handle **request budget exhaustion** stays exit **0**.
 
 ## Provider URL overrides and transport
 

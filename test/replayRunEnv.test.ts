@@ -177,6 +177,50 @@ describe("npm run analyze replay gate", () => {
     );
   });
 
+  it("replays a slice with retrieval_failed without calling Desearch", { skip: !vendorReady }, () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-replay-failed-"));
+    const slicePath = saveSlice(dir, {
+      version: 1,
+      fetchedAt: "2026-11-02T12:00:00.000Z",
+      fetchedCommit: "e".repeat(40),
+      referenceDate: "2026-11-02",
+      handles: ["bullmacro"],
+      postsSource: "desearch",
+      outcomes: outcomesForSlice([
+        {
+          status: "retrieval_failed",
+          handle: "bullmacro",
+          failureCategory: "http_status",
+          httpStatus: 404,
+          reason: "Desearch request failed (HTTP 404).",
+        },
+      ]),
+    });
+    const envDir = mkdtempSync(path.join(tmpdir(), "analyze-replay-failed-env-"));
+    const envFile = path.join(envDir, ".env");
+    writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
+    const result = spawnSync(
+      "npm",
+      [
+        "run",
+        "analyze",
+        "--",
+        "--yes",
+        "--handles",
+        "bullmacro",
+        "--replay",
+        slicePath,
+        "--as-of",
+        "2026-11-02",
+        "--env-file",
+        envFile,
+      ],
+      { cwd: repoRoot, env: minimalShellEnv(), encoding: "utf8" },
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /retrieval failed/i);
+  });
+
   it("does not require Desearch keys in the env file for replay", { skip: !vendorReady }, () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-replay-no-desearch-"));
     const envFile = path.join(envDir, ".env");

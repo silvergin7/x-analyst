@@ -705,6 +705,7 @@ describe("runReport live gates", () => {
   it("hides provider exception text and keeps billing from responses already received", async () => {
     const fakeKey = "sk-live-FAKEKEY-SHOULD-NOT-PRINT";
     let calls = 0;
+    const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-partial-"));
     const transport: DesearchTransport = {
       async execute(request) {
         calls += 1;
@@ -719,51 +720,30 @@ describe("runReport live gates", () => {
         throw new Error(`Desearch secret ${fakeKey}`);
       },
     };
-    const model = chutesTransport({
-      outlook: "bullish",
-      explanation: "Should not be used.",
-      evidencePostIds: ["p1"],
-    });
+    const model = chutesTransport(
+      classified("bullish", "Constructive on growth.", ["p1"]),
+    );
     const cache = createFetchSliceCache();
-    await assert.rejects(
-      () =>
-        runReport(["bullmacro", "bearmacro"], question, {
-          referenceDate: "2026-11-02",
-          env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "2" }),
-          cache,
-          desearchTransport: transport,
-          chutesTransport: model.transport,
-        }),
-      (err: unknown) => {
-        if (!(err instanceof ReportRunError)) return false;
-        assert.match(err.message, /Desearch HTTPS request failed/);
-        assert.equal(err.message.includes(fakeKey), false);
-        assert.equal(err.message.includes("secret"), false);
-        assert.equal(err.details.sliceStored, false);
-        assert.deepEqual(err.details.billing, [{ usageCount: 2 }]);
-        assert.deepEqual(err.details.providerUsages, []);
-        return true;
-      },
-    );
+    const result = await runReport(["bullmacro", "bearmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "2", X_ANALYST_SLICE_DIR: dir }),
+      cache,
+      sliceDirectory: dir,
+      desearchTransport: transport,
+      chutesTransport: model.transport,
+    });
     assert.equal(calls, 2);
-    assert.equal(model.calls.length, 0);
-
-    await assert.rejects(
-      () =>
-        runReport(["bullmacro", "bearmacro"], question, {
-          referenceDate: "2026-11-02",
-          env: desearchEnv({ DESEARCH_MAX_REQUESTS_PER_RUN: "2" }),
-          cache,
-          desearchTransport: transport,
-          chutesTransport: model.transport,
-        }),
-      ReportRunError,
-    );
-    assert.equal(calls, 4);
+    assert.equal(model.calls.length, 1);
+    assert.equal(result.fetchOutcomes[0]?.status, "ok");
+    assert.equal(result.fetchOutcomes[1]?.status, "retrieval_failed");
+    assert.deepEqual(result.billing, [{ usageCount: 2 }]);
+    assert.equal(result.reports.length, 1);
+    assert.equal(readdirSync(dir).length, 1);
   });
 
   it("reports HTTP status and billing without the provider error body", async () => {
     const fakeKey = "sk-live-FAKEKEY-SHOULD-NOT-PRINT";
+    const dir = mkdtempSync(path.join(tmpdir(), "x-analyst-slice-401-"));
     const transport: DesearchTransport = {
       async execute() {
         return {
@@ -773,27 +753,27 @@ describe("runReport live gates", () => {
         };
       },
     };
-    await assert.rejects(
-      () =>
-        runReport(["bullmacro"], question, {
-          referenceDate: "2026-11-02",
-          env: desearchEnv(),
-          cache: createFetchSliceCache(),
-          desearchTransport: transport,
-          chutesTransport: chutesTransport({
-            outlook: "unclear",
-            explanation: "unused",
-            evidencePostIds: [],
-          }).transport,
-        }),
-      (err: unknown) =>
-        err instanceof ReportRunError &&
-        /HTTP 401/.test(err.message) &&
-        !err.message.includes(fakeKey) &&
-        err.details.billing[0]?.usageCount === 6 &&
-        err.details.billing[0]?.costUsd === 0.15 &&
-        err.details.sliceStored === false,
-    );
+    const result = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-11-02",
+      env: desearchEnv({ X_ANALYST_SLICE_DIR: dir }),
+      cache: createFetchSliceCache(),
+      sliceDirectory: dir,
+      desearchTransport: transport,
+      chutesTransport: chutesTransport({
+        outlook: "unclear",
+        explanation: "unused",
+        evidencePostIds: [],
+      }).transport,
+    });
+    assert.equal(result.fetchOutcomes[0]?.status, "retrieval_failed");
+    if (result.fetchOutcomes[0]?.status === "retrieval_failed") {
+      assert.equal(result.fetchOutcomes[0].httpStatus, 401);
+      assert.equal(result.fetchOutcomes[0].reason.includes(fakeKey), false);
+    }
+    assert.equal(result.billing[0]?.usageCount, 6);
+    assert.equal(result.billing[0]?.costUsd, 0.15);
+    assert.equal(result.reports.length, 0);
+    assert.equal(readdirSync(dir).length, 1);
   });
 
   it("saves a slice and replays it without calling Desearch", async () => {

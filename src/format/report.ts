@@ -53,6 +53,14 @@ export function formatFetchIssue(
         `  [!] Incomplete retrieval for "@${outcome.handle}": ${outcome.reason} — ` +
         "analyst was not examined (no outlook inferred)"
       );
+    case "retrieval_failed": {
+      const status =
+        outcome.httpStatus !== undefined ? ` HTTP ${outcome.httpStatus}` : "";
+      return (
+        `  [!] Desearch retrieval failed for "@${outcome.handle}" ` +
+        `(${outcome.failureCategory}${status}): ${outcome.reason}`
+      );
+    }
     case "ok": {
       const stop = outcome.fetchStopReason
         ? `Fetch stopped: ${FETCH_STOP_LABEL[outcome.fetchStopReason]}`
@@ -61,9 +69,15 @@ export function formatFetchIssue(
         const label =
           INCOMPLETE_REASON_LABEL[outcome.incompleteReason] ??
           outcome.incompleteReason;
+        const halt =
+          outcome.failureCategory !== undefined
+            ? ` — ${outcome.failureCategory}${
+                outcome.httpStatus !== undefined ? ` HTTP ${outcome.httpStatus}` : ""
+              }${outcome.reason !== undefined ? `: ${outcome.reason}` : ""}`
+            : "";
         const partial =
           `  [~] Partial retrieval for "@${outcome.handle}": ${label} ` +
-          `(${outcome.posts.length} post(s) retrieved)`;
+          `(${outcome.posts.length} post(s) retrieved)${halt}`;
         return stop === "" ? partial : `${partial}\n  ${stop}`;
       }
       if (stop !== "") {

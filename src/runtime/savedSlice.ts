@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type {
+  DesearchFailureCategory,
   FetchIncompleteReason,
   FetchOutcome,
   FetchStopReason,
@@ -9,6 +10,14 @@ import type {
   PostKind,
   PostSource,
 } from "../types.js";
+
+const FAILURE_CATEGORIES = new Set<DesearchFailureCategory>([
+  "http_status",
+  "timeout",
+  "network",
+  "invalid_json",
+  "parse",
+]);
 
 export const SAVED_SLICE_VERSION = 1;
 export const DEFAULT_SLICE_DIRECTORY = path.join("data", "slices");
@@ -200,7 +209,47 @@ function readOutcome(value: unknown, index: number): FetchOutcome {
     if (isSkipCounts(value.invalidPostsSkipped)) {
       outcome.invalidPostsSkipped = value.invalidPostsSkipped;
     }
+    if (typeof value.failureCategory === "string") {
+      if (!FAILURE_CATEGORIES.has(value.failureCategory as DesearchFailureCategory)) {
+        throw new SavedSliceError(`Slice outcome ${index} has a bad failureCategory`);
+      }
+      outcome.failureCategory = value.failureCategory as DesearchFailureCategory;
+    }
+    if (value.httpStatus !== undefined) {
+      if (typeof value.httpStatus !== "number") {
+        throw new SavedSliceError(`Slice outcome ${index} httpStatus must be a number`);
+      }
+      outcome.httpStatus = value.httpStatus;
+    }
+    if (value.reason !== undefined) {
+      if (typeof value.reason !== "string" || value.reason.trim() === "") {
+        throw new SavedSliceError(`Slice outcome ${index} reason must be a non-empty string`);
+      }
+      outcome.reason = value.reason;
+    }
     return outcome;
+  }
+  if (value.status === "retrieval_failed") {
+    if (
+      typeof value.failureCategory !== "string" ||
+      typeof value.reason !== "string" ||
+      value.reason.trim() === ""
+    ) {
+      throw new SavedSliceError(`Slice outcome ${index} retrieval_failed is incomplete`);
+    }
+    if (value.httpStatus !== undefined && typeof value.httpStatus !== "number") {
+      throw new SavedSliceError(`Slice outcome ${index} httpStatus must be a number`);
+    }
+    if (!FAILURE_CATEGORIES.has(value.failureCategory as DesearchFailureCategory)) {
+      throw new SavedSliceError(`Slice outcome ${index} has a bad failureCategory`);
+    }
+    return {
+      status: "retrieval_failed",
+      handle: value.handle,
+      failureCategory: value.failureCategory as DesearchFailureCategory,
+      reason: value.reason,
+      ...(typeof value.httpStatus === "number" ? { httpStatus: value.httpStatus } : {}),
+    };
   }
   if (
     value.status === "incomplete" ||
@@ -208,6 +257,11 @@ function readOutcome(value: unknown, index: number): FetchOutcome {
     value.status === "invalid_handle" ||
     value.status === "empty"
   ) {
+    if (value.status === "incomplete" && typeof value.reason === "string") {
+      if (!INCOMPLETE_REASONS.has(value.reason as FetchIncompleteReason)) {
+        throw new SavedSliceError(`Slice outcome ${index} has a bad incomplete reason`);
+      }
+    }
     return value as FetchOutcome;
   }
   throw new SavedSliceError(`Slice outcome ${index} has an unknown status`);

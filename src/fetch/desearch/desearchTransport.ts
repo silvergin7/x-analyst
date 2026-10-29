@@ -1,4 +1,4 @@
-import type { DesearchBilling } from "../../types.js";
+import type { DesearchBilling, DesearchFailureCategory } from "../../types.js";
 import type { DesearchPostsRequest } from "./buildRequest.js";
 
 /** Injected transport — tests provide a mock; production wiring uses HTTPS. */
@@ -10,12 +10,7 @@ export interface DesearchTransport {
   }>;
 }
 
-export type DesearchFailureCategory =
-  | "http_status"
-  | "timeout"
-  | "network"
-  | "invalid_json"
-  | "parse";
+export type { DesearchFailureCategory };
 
 /** Retrieval stopped after one or more responses, or before a usable body. */
 export class DesearchRetrievalError extends Error {

@@ -16,6 +16,7 @@ import { confirmProceed } from "./runtime/confirmationGate.js";
 import { EnvFileError, loadEnvFileIntoProcess } from "./runtime/loadEnvFile.js";
 import { liveFetchEnvLooksDisabled, offlineProviderEnv } from "./runtime/offlineProviderEnv.js";
 import { chutesLiveEnvLooksDisabled, stripDesearchForReplayRun } from "./runtime/replayRunEnv.js";
+import { fetchOutcomesFailExit } from "./runtime/fetchExitCode.js";
 import { validateProviderOverrides } from "./runtime/providerUrlPreflight.js";
 
 const ENV_FILE = ".env";
@@ -208,7 +209,7 @@ async function main(): Promise<void> {
     );
     process.stdout.write(`Report JSON: ${reportPath}\n`);
 
-    if (result.handleFailures.length > 0) {
+    if (result.handleFailures.length > 0 || fetchOutcomesFailExit(result.fetchOutcomes)) {
       process.exitCode = 1;
     }
   } catch (err) {

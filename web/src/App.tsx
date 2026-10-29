@@ -96,11 +96,25 @@ interface OutlookReport {
 }
 
 type FetchOutcome =
-  | { status: "ok"; handle: string }
+  | {
+      status: "ok";
+      handle: string;
+      incompleteReason?: string;
+      failureCategory?: string;
+      httpStatus?: number;
+      reason?: string;
+    }
   | { status: "incomplete"; handle: string; reason: string }
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }
-  | { status: "empty"; handle: string };
+  | { status: "empty"; handle: string }
+  | {
+      status: "retrieval_failed";
+      handle: string;
+      failureCategory: string;
+      reason: string;
+      httpStatus?: number;
+    };
 
 interface AnalyzeSuccess {
   question: string;
@@ -470,12 +484,41 @@ function readFetchOutcome(value: unknown): FetchOutcome | null {
   if (!isRecord(value) || !isNonEmptyString(value.handle) || typeof value.status !== "string") {
     return null;
   }
-  if (value.status === "ok" || value.status === "unknown_handle" || value.status === "empty") {
+  if (value.status === "ok") {
+    return {
+      status: "ok",
+      handle: value.handle,
+      ...(typeof value.incompleteReason === "string"
+        ? { incompleteReason: value.incompleteReason }
+        : {}),
+      ...(typeof value.failureCategory === "string"
+        ? { failureCategory: value.failureCategory }
+        : {}),
+      ...(typeof value.httpStatus === "number" ? { httpStatus: value.httpStatus } : {}),
+      ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+    };
+  }
+  if (value.status === "unknown_handle" || value.status === "empty") {
     return { status: value.status, handle: value.handle };
   }
   if (value.status === "incomplete" || value.status === "invalid_handle") {
     if (typeof value.reason !== "string") return null;
     return { status: value.status, handle: value.handle, reason: value.reason };
+  }
+  if (value.status === "retrieval_failed") {
+    if (
+      typeof value.reason !== "string" ||
+      typeof value.failureCategory !== "string"
+    ) {
+      return null;
+    }
+    return {
+      status: "retrieval_failed",
+      handle: value.handle,
+      failureCategory: value.failureCategory,
+      reason: value.reason,
+      ...(typeof value.httpStatus === "number" ? { httpStatus: value.httpStatus } : {}),
+    };
   }
   return null;
 }
@@ -539,7 +582,21 @@ export function statusLines(input: {
   }));
 
   input.fetchOutcomes.forEach((outcome, index) => {
-    if (outcome.status === "ok") return;
+    if (outcome.status === "ok") {
+      if (outcome.incompleteReason) {
+        const halt =
+          outcome.failureCategory !== undefined
+            ? ` (${outcome.failureCategory}${
+                outcome.httpStatus !== undefined ? ` HTTP ${outcome.httpStatus}` : ""
+              }${outcome.reason !== undefined ? `: ${outcome.reason}` : ""})`
+            : "";
+        lines.push({
+          key: `partial-${index}-${outcome.handle}`,
+          text: `@${outcome.handle}: partial retrieval (${outcome.incompleteReason})${halt}`,
+        });
+      }
+      return;
+    }
     if (
       outcome.status === "invalid_handle" &&
       input.invalidHandles.some((item) => sameInvalid(item.raw, outcome.handle))
