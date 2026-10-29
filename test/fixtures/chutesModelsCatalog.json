@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "id": "zai-org/GLM-5.2-TEE",
+      "root": "zai-org/GLM-5.2",
+      "pricing": { "prompt": 0.5, "completion": 2.0 },
+      "context_length": 131072,
+      "max_output_length": 65536,
+      "supported_features": ["structured_outputs", "reasoning"],
+      "confidential_compute": true
+    },
+    {
+      "id": "vendor/cheap-TEE",
+      "root": "vendor/cheap",
+      "pricing": { "prompt": 0.1, "completion": 0.2 },
+      "context_length": 4096,
+      "max_output_length": 2048,
+      "supported_features": ["structured_outputs", "reasoning"],
+      "confidential_compute": true
+    },
+    {
+      "id": "bad/no-pricing",
+      "root": "bad/no-pricing",
+      "context_length": 10000,
+      "max_output_length": 1000,
+      "supported_features": ["reasoning"],
+      "confidential_compute": true
+    },
+    "not-an-object"
+  ]
+}

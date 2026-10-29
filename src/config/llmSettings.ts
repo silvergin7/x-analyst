@@ -54,6 +54,10 @@ export const LLM_MAX_QUESTION_CHARS = 500;
 export const LLM_MAX_EXPLANATION_CHARS = 1500;
 export const LLM_REQUEST_TIMEOUT_MS = 120_000;
 
+export const CHUTES_CATALOG_TIMEOUT_MS = 10_000;
+
+export const CHUTES_CATALOG_MAX_BYTES = 5 * 1024 * 1024;
+
 /**
  * Extra input-token allowance per chat message for template special tokens
  * that are not present in the serialized JSON body.
