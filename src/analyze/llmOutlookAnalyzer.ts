@@ -23,6 +23,7 @@ import {
   requestChutesCompletion,
   type ChutesTransport,
 } from "./chutesClient.js";
+import type { LlmRunSpendLedger } from "./llmRunSpendLedger.js";
 import { buildChatMessages } from "./llmPrompt.js";
 import { loadLlmRuntimeConfig, type LlmRuntimeConfig } from "../config/llmSettings.js";
 import type { OutlookAnalyzer } from "./outlookAnalyzer.js";
@@ -58,6 +59,7 @@ function assertQuestionBound(question: string): void {
 export interface LlmOutlookAnalyzerOptions {
   runEnv: NodeJS.ProcessEnv;
   onEstimate?: (estimate: BudgetEstimate) => void;
+  runLedger?: LlmRunSpendLedger;
 }
 
 export class LlmOutlookAnalyzer implements OutlookAnalyzer {
@@ -86,12 +88,14 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     this.referenceDate = parsed;
     this.runEnv = options.runEnv;
     this.onEstimate = options.onEstimate;
+    this.runLedger = options.runLedger;
   }
 
   private readonly config: LlmRuntimeConfig;
   private readonly transport: ChutesTransport;
   private readonly runEnv: NodeJS.ProcessEnv;
   private readonly onEstimate?: (estimate: BudgetEstimate) => void;
+  private readonly runLedger?: LlmRunSpendLedger;
 
   async analyzePerson(
     handle: string,
@@ -162,6 +166,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       classificationOutputTokenCeiling(plan.sent.length, this.runEnv),
       aliases.map((item) => item.alias),
       this.onEstimate,
+      this.runLedger,
     );
     try {
       const parsed = parseModelOutlook(

@@ -2,9 +2,11 @@ import {
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
   LLM_REQUEST_TIMEOUT_MS,
+  LLM_RUN_BUDGET_USD,
   fitsModelContextWindow,
   type LlmRuntimeConfig,
 } from "../config/llmSettings.js";
+import type { LlmRunSpendLedger } from "./llmRunSpendLedger.js";
 import type { BudgetEstimate, ProviderTokenUsage } from "../types.js";
 import { stripLeadingEmptyThinkingBlock } from "./modelCompletionText.js";
 import {
@@ -190,6 +192,7 @@ export async function requestChutesCompletion(
   maxTokens: number,
   aliases: readonly string[],
   onEstimate?: (estimate: BudgetEstimate) => void,
+  runLedger?: LlmRunSpendLedger,
 ): Promise<ChutesCompletion> {
   if (!config.eligible) {
     throw new LlmCallError(
@@ -204,6 +207,13 @@ export async function requestChutesCompletion(
     throw new LlmCallError(
       "budget",
       `Pessimistic estimate $${estimate.estimatedUsd.toFixed(6)} exceeds the $${LLM_CALL_BUDGET_USD.toFixed(2)} local budget`,
+      estimate,
+    );
+  }
+  if (runLedger !== undefined && runLedger.wouldExceedRunBudget(estimate.estimatedUsd)) {
+    throw new LlmCallError(
+      "budget",
+      `Pessimistic estimate $${estimate.estimatedUsd.toFixed(6)} would exceed the $${LLM_RUN_BUDGET_USD.toFixed(2)} run budget (already committed $${runLedger.totalCommittedUsd.toFixed(6)})`,
       estimate,
     );
   }
@@ -223,6 +233,7 @@ export async function requestChutesCompletion(
   }
 
   onEstimate?.(estimate);
+  runLedger?.recordCommittedEstimate(estimate.estimatedUsd);
   const signal = AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS);
   let response: ChutesTransportResponse;
   try {

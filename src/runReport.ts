@@ -44,6 +44,7 @@ import {
   saveSlice,
 } from "./runtime/savedSlice.js";
 import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
+import { LlmRunSpendLedger } from "./analyze/llmRunSpendLedger.js";
 import type {
   AnalysisProviderLabel,
   AnalysisQuestion,
@@ -385,6 +386,7 @@ export async function runReport(
     reports: PersonOutlookReport[];
     handleFailures: HandleAnalysisFailure[];
   }> {
+    const runLedger = analysisSource === "chutes" ? new LlmRunSpendLedger() : undefined;
     const analyzer =
       analysisSource === "chutes"
         ? new LlmOutlookAnalyzer(
@@ -392,7 +394,7 @@ export async function runReport(
             options.chutesTransport ?? createFetchChutesTransport(),
             referenceDate,
             postsSource,
-            { runEnv: env, onEstimate: options.onEstimate },
+            { runEnv: env, onEstimate: options.onEstimate, runLedger },
           )
         : new MockOutlookAnalyzer();
     const reports: PersonOutlookReport[] = [];
