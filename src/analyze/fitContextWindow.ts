@@ -10,11 +10,8 @@ import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import type { TokenizerRuntime } from "./tokenizerRuntime.js";
 import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
 import { postAliases } from "./postAliases.js";
-import {
-  buildChatMessages,
-  buildChutesRequestBody,
-  estimateRequestBudget,
-} from "./llmPrompt.js";
+import { countRequestInputTokens } from "./tokenBudget.js";
+import { buildChatMessages, buildChutesRequestBody } from "./llmPrompt.js";
 
 export interface ContextWindowFitInput {
   question: string;
@@ -57,8 +54,8 @@ function estimateFits(sent: readonly SentPost[], input: ContextWindowFitInput): 
     maxTokens,
     aliases,
   );
-  const estimate = estimateRequestBudget(body, input.env, undefined, runtime);
-  return fitsModelContextWindow(contextLengthTokens, estimate.inputTokensUpper, maxTokens);
+  const counted = countRequestInputTokens(body, input.env, runtime);
+  return fitsModelContextWindow(contextLengthTokens, counted.inputTokensUpper, maxTokens);
 }
 
 /**

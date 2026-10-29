@@ -1,6 +1,7 @@
 import { planAnalysisInput } from "./analysisInput.js";
 import { fitAnalysisInputToContextWindow } from "./fitContextWindow.js";
-import { buildChatMessages, buildChutesRequestBody, estimateRequestBudget } from "./llmPrompt.js";
+import { countRequestInputTokens } from "./tokenBudget.js";
+import { buildChatMessages, buildChutesRequestBody } from "./llmPrompt.js";
 import { classificationOutputJsonByteCeiling, classificationOutputTokenCeiling } from "./outputBudget.js";
 import { postAliases } from "./postAliases.js";
 import {
@@ -58,8 +59,8 @@ export function worstCaseHandleCeilings(input: {
       outputCeiling,
       aliases,
     );
-    const estimate = estimateRequestBudget(body, input.env, undefined, runtime);
-    inputTokensUpper = Math.max(inputTokensUpper, estimate.inputTokensUpper);
+    const counted = countRequestInputTokens(body, input.env, runtime);
+    inputTokensUpper = Math.max(inputTokensUpper, counted.inputTokensUpper);
     outputTokensUpper = Math.max(outputTokensUpper, outputCeiling);
   }
   return { inputTokensUpper, outputTokensUpper };

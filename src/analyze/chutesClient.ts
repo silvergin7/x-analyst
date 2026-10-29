@@ -1,4 +1,5 @@
 import {
+  ChutesPricingError,
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
   LLM_REQUEST_TIMEOUT_MS,
@@ -206,7 +207,15 @@ export async function requestChutesCompletion(
   }
 
   const requestBody = buildChutesRequestBody(messages, config.model, maxTokens, aliases);
-  const estimate = estimateRequestBudget(requestBody, env, undefined, tokenizerRuntime);
+  let estimate: BudgetEstimate;
+  try {
+    estimate = estimateRequestBudget(requestBody, env, config.modelPricing, tokenizerRuntime);
+  } catch (err) {
+    if (err instanceof ChutesPricingError) {
+      throw new LlmCallError("gate", err.message);
+    }
+    throw err;
+  }
   if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
     throw new LlmCallError(
       "budget",

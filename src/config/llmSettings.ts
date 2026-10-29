@@ -277,12 +277,30 @@ export function fitsModelContextWindow(
   );
 }
 
+export class ChutesPricingError extends Error {
+  constructor() {
+    super("Chutes model pricing is missing or not a positive finite number");
+    this.name = "ChutesPricingError";
+  }
+}
+
+function positiveFinitePrice(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 /** Pessimistic USD ceiling from token counts and catalog pricing. */
 export function priceTokenCeiling(
   inputTokensUpper: number,
   outputTokensUpper: number,
-  pricing: ChutesModelPricing,
+  pricing: ChutesModelPricing | undefined,
 ): Pick<BudgetEstimate, "estimatedUsd" | "inputTokensUpper" | "outputTokensUpper"> {
+  if (
+    pricing === undefined ||
+    !positiveFinitePrice(pricing.promptUsdPerMillion) ||
+    !positiveFinitePrice(pricing.completionUsdPerMillion)
+  ) {
+    throw new ChutesPricingError();
+  }
   const estimatedUsd =
     (inputTokensUpper * pricing.promptUsdPerMillion) / 1_000_000 +
     (outputTokensUpper * pricing.completionUsdPerMillion) / 1_000_000;

@@ -367,6 +367,7 @@ describe("LlmOutlookAnalyzer", () => {
         postAliases(fitted.sent).map((item) => item.alias),
       ),
       process.env,
+      testLlmRuntimeFields().modelPricing,
     );
     const narrowContext = 55_000;
     assert.equal(
@@ -430,6 +431,38 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(report.outlook, "unclear");
   });
 
+  it("stops before any post when Chutes pricing is missing", async () => {
+    const missing = {
+      promptUsdPerMillion: undefined,
+      completionUsdPerMillion: undefined,
+    } as unknown as LlmRuntimeConfig["modelPricing"];
+    const badPrices = [
+      missing,
+      { promptUsdPerMillion: 0, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: -1, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: Number.NaN, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: Number.POSITIVE_INFINITY, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: 0.5, completionUsdPerMillion: 0 },
+      { promptUsdPerMillion: 0.5, completionUsdPerMillion: Number.NaN },
+    ];
+    for (const modelPricing of badPrices) {
+      const recorded = recordingTransport();
+      await assert.rejects(
+        () =>
+          requestChutesCompletion(
+            liveConfig({ modelPricing }),
+            [{ role: "user", content: "hi" }],
+            recorded.transport,
+            process.env,
+            800,
+            ["p1"],
+          ),
+        (err: unknown) => err instanceof LlmCallError && err.code === "gate",
+      );
+      assert.equal(recorded.calls.length, 0);
+    }
+  });
+
   it("rejects an over-budget request before any HTTP call", async () => {
     const recorded = recordingTransport();
     const messages = [
@@ -470,6 +503,7 @@ describe("LlmOutlookAnalyzer", () => {
         postAliases(modestPlan.sent).map((item) => item.alias),
       ),
       process.env,
+      testLlmRuntimeFields().modelPricing,
     );
     assert.equal(modestPlan.sent.length, 60);
     assert.ok(modestEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
@@ -492,6 +526,7 @@ describe("LlmOutlookAnalyzer", () => {
           postAliases(slicePlan.sent).map((item) => item.alias),
         ),
         process.env,
+        testLlmRuntimeFields().modelPricing,
       );
       assert.equal(slicePlan.sent.length, count);
       assert.equal(sliceEstimate.basis, "hf-tokenizer-conservative");

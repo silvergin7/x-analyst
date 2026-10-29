@@ -153,6 +153,7 @@ export async function runLlmFixtureCheck(input: FixtureCheckInput): Promise<numb
         postAliases(plan.sent).map((item) => item.alias),
       ),
       input.env,
+      config.modelPricing,
     );
     input.write(`${formatBudgetEstimate(estimate)}\n`);
     if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
