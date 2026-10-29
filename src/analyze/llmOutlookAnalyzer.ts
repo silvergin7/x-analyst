@@ -113,6 +113,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       analysisSource: "llm" as const,
       analysisReferenceDate: this.referenceDate,
       duplicatePostsRemoved: retrieval.duplicatePostsRemoved,
+      invalidPostsSkipped: retrieval.invalidPostsSkipped,
       postsWithMedia: posts.filter((post) => post.hasAttachedMedia === true).length,
     };
 

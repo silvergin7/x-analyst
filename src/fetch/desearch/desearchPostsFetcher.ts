@@ -191,22 +191,39 @@ export class DesearchPostsFetcher implements PostsFetcher {
               pageResult.billing,
             ),
           );
+        } else if (pageResult.handleIncompleteReason !== undefined) {
+          outcomes.push(
+            withBilling(
+              {
+                status: "incomplete",
+                handle,
+                reason: pageResult.handleIncompleteReason,
+              },
+              pageResult.billing,
+            ),
+          );
         } else {
           outcomes.push(withBilling({ status: "empty", handle }, pageResult.billing));
         }
         continue;
       }
 
+      const skipCounts = pageResult.invalidPostsSkipped;
+      const hasSkips = Object.keys(skipCounts).length > 0;
       outcomes.push(
         withBilling(
           {
             status: "ok",
             handle,
             posts: pageResult.posts,
-            retrievalComplete: !stoppedForRequests,
-            incompleteReason: stoppedForRequests ? requestLimit : undefined,
+            retrievalComplete:
+              !stoppedForRequests && pageResult.handleIncompleteReason === undefined,
+            incompleteReason: stoppedForRequests
+              ? requestLimit
+              : pageResult.handleIncompleteReason,
             fetchStopReason,
             duplicatePostsRemoved: pageResult.duplicatesRemoved,
+            ...(hasSkips ? { invalidPostsSkipped: skipCounts } : {}),
           },
           pageResult.billing,
         ),

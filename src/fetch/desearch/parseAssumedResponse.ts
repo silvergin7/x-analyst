@@ -1,6 +1,8 @@
 import type { Post, PostKind } from "../../types.js";
 import type { DesearchTwitterPostItem } from "./assumedApiTypes.js";
 
+export type InvalidPostsSkipped = Record<string, number>;
+
 export type ParseResult =
   | {
       ok: true;
@@ -10,6 +12,9 @@ export type ParseResult =
       nextCursor: string | undefined;
       /** Identical ids dropped inside this page. A different copy fails the response. */
       duplicatesRemoved: number;
+      invalidPostsSkipped: InvalidPostsSkipped;
+      /** Length of the tweets array in this response. */
+      sourceItemCount: number;
     }
   | { ok: false; reason: string };
 
@@ -31,6 +36,10 @@ function validatePostUrl(value: string): boolean {
   }
 }
 
+function incrementSkip(skipped: InvalidPostsSkipped, code: string): void {
+  skipped[code] = (skipped[code] ?? 0) + 1;
+}
+
 /**
  * Classify post kind from documented booleans only.
  * Missing flags are rejected and never default to original.
@@ -39,15 +48,11 @@ function validatePostUrl(value: string): boolean {
  */
 function resolvePostKind(
   item: DesearchTwitterPostItem,
-  index: number,
 ):
   | { ok: true; kind: PostKind; typeConflict?: "retweet_and_quote" }
-  | { ok: false; reason: string } {
+  | { ok: false; skipCode: "invalid_kind_flags" } {
   if (typeof item.is_retweet !== "boolean" || typeof item.is_quote_tweet !== "boolean") {
-    return {
-      ok: false,
-      reason: `item ${index}: is_retweet and is_quote_tweet must be booleans`,
-    };
+    return { ok: false, skipCode: "invalid_kind_flags" };
   }
   if (item.is_retweet === true && item.is_quote_tweet === true) {
     return { ok: true, kind: "repost", typeConflict: "retweet_and_quote" };
@@ -69,39 +74,38 @@ function readQuotedPostText(item: Record<string, unknown>): string | undefined {
 function mapTweet(
   expectedUsername: string,
   item: unknown,
-  index: number,
-): { ok: true; post: Post } | { ok: false; reason: string } {
+): { ok: true; post: Post } | { ok: false; skipCode: string } {
   if (!isRecord(item)) {
-    return { ok: false, reason: `item ${index}: not an object` };
+    return { ok: false, skipCode: "not_an_object" };
   }
   const raw = item as unknown as DesearchTwitterPostItem;
   if (typeof raw.id !== "string" || raw.id.trim() === "") {
-    return { ok: false, reason: `item ${index}: missing tweet id` };
+    return { ok: false, skipCode: "missing_tweet_id" };
   }
   if (typeof raw.text !== "string") {
-    return { ok: false, reason: `item ${index}: missing tweet text` };
+    return { ok: false, skipCode: "missing_tweet_text" };
   }
   if (typeof raw.created_at !== "string" || !validateTimestamp(raw.created_at)) {
-    return { ok: false, reason: `item ${index}: invalid timestamp` };
+    return { ok: false, skipCode: "invalid_timestamp" };
   }
   if (typeof raw.url !== "string" || !validatePostUrl(raw.url)) {
-    return { ok: false, reason: `item ${index}: invalid url` };
+    return { ok: false, skipCode: "invalid_url" };
   }
   if (!isRecord(raw.user) || typeof raw.user.username !== "string") {
-    return { ok: false, reason: `item ${index}: missing tweet.user.username` };
+    return { ok: false, skipCode: "missing_username" };
   }
   const authorHandle = raw.user.username.trim().toLowerCase();
   if (authorHandle !== expectedUsername) {
-    return { ok: false, reason: `item ${index}: author username mismatch` };
+    return { ok: false, skipCode: "author_mismatch" };
   }
 
-  const kindResult = resolvePostKind(raw, index);
+  const kindResult = resolvePostKind(raw);
   if (!kindResult.ok) return kindResult;
 
   const ownText = raw.text.trim();
   const pureQuote = kindResult.kind === "quote" && !kindResult.typeConflict;
   if (ownText === "" && !pureQuote) {
-    return { ok: false, reason: `item ${index}: missing tweet text` };
+    return { ok: false, skipCode: "empty_text" };
   }
 
   const post: Post = {
@@ -173,18 +177,31 @@ export function parseTwitterUserPostsResponse(
   const cursorResult = readNextCursor(payload);
   if (!cursorResult.ok) return cursorResult;
   const { hasMorePages, nextCursor } = cursorResult;
+  const sourceItemCount = payload.tweets.length;
 
-  if (payload.tweets.length === 0) {
-    return { ok: true, posts: [], hasMorePages, nextCursor, duplicatesRemoved: 0 };
+  if (sourceItemCount === 0) {
+    return {
+      ok: true,
+      posts: [],
+      hasMorePages,
+      nextCursor,
+      duplicatesRemoved: 0,
+      invalidPostsSkipped: {},
+      sourceItemCount: 0,
+    };
   }
 
   const posts: Post[] = [];
   const seen = new Map<string, Post>();
   let duplicatesRemoved = 0;
+  const invalidPostsSkipped: InvalidPostsSkipped = {};
 
   for (let i = 0; i < payload.tweets.length; i++) {
-    const mapped = mapTweet(expectedUsername, payload.tweets[i], i);
-    if (!mapped.ok) return mapped;
+    const mapped = mapTweet(expectedUsername, payload.tweets[i]);
+    if (!mapped.ok) {
+      incrementSkip(invalidPostsSkipped, mapped.skipCode);
+      continue;
+    }
     const prior = seen.get(mapped.post.id);
     if (prior) {
       if (!samePageCopy(prior, mapped.post)) {
@@ -200,7 +217,15 @@ export function parseTwitterUserPostsResponse(
     posts.push(mapped.post);
   }
 
-  return { ok: true, posts, hasMorePages, nextCursor, duplicatesRemoved };
+  return {
+    ok: true,
+    posts,
+    hasMorePages,
+    nextCursor,
+    duplicatesRemoved,
+    invalidPostsSkipped,
+    sourceItemCount,
+  };
 }
 
 function samePageCopy(a: Post, b: Post): boolean {

@@ -29,6 +29,8 @@ const INCOMPLETE_REASONS = new Set<FetchIncompleteReason>([
   "per_person_limit_reached",
   "desearch_request_budget_exhausted",
   "desearch_handle_request_limit_reached",
+  "desearch_page_no_valid_posts",
+  "desearch_retrieval_interrupted",
 ]);
 const STOP_REASONS = new Set<FetchStopReason>([
   "lookback_window_reached",
@@ -195,6 +197,9 @@ function readOutcome(value: unknown, index: number): FetchOutcome {
     if (typeof value.duplicatePostsRemoved === "number") {
       outcome.duplicatePostsRemoved = value.duplicatePostsRemoved;
     }
+    if (isSkipCounts(value.invalidPostsSkipped)) {
+      outcome.invalidPostsSkipped = value.invalidPostsSkipped;
+    }
     return outcome;
   }
   if (
@@ -240,4 +245,11 @@ function assertNoSecretKeys(value: unknown): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSkipCounts(value: unknown): value is Record<string, number> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(
+    (count) => typeof count === "number" && Number.isInteger(count) && count >= 0,
+  );
 }

@@ -83,6 +83,7 @@ interface OutlookReport {
   viewMayBeStale?: boolean;
   fetchStopReason?: FetchStopReason;
   duplicatePostsRemoved?: number;
+  invalidPostsSkipped?: Record<string, number>;
   postsWithMedia?: number;
   assetOutlooks?: Array<{
     assetClass: string;
@@ -370,6 +371,8 @@ function readReport(value: unknown): OutlookReport | null {
   if (value.duplicatePostsRemoved !== undefined && !isCount(value.duplicatePostsRemoved)) {
     return null;
   }
+  const invalidPostsSkipped = readSkipCounts(value.invalidPostsSkipped);
+  if (invalidPostsSkipped === null) return null;
   if (value.postsWithMedia !== undefined && !isCount(value.postsWithMedia)) return null;
   const classifications = readClassifications(value.classifications);
   if (classifications === null) return null;
@@ -399,9 +402,21 @@ function readReport(value: unknown): OutlookReport | null {
     ...(isCount(value.duplicatePostsRemoved)
       ? { duplicatePostsRemoved: value.duplicatePostsRemoved }
       : {}),
+    ...(invalidPostsSkipped ? { invalidPostsSkipped } : {}),
     ...(isCount(value.postsWithMedia) ? { postsWithMedia: value.postsWithMedia } : {}),
     ...(classifications ? { classifications } : {}),
   };
+}
+
+function readSkipCounts(value: unknown): Record<string, number> | null | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return null;
+  const out: Record<string, number> = {};
+  for (const [key, count] of Object.entries(value)) {
+    if (!isCount(count)) return null;
+    out[key] = count;
+  }
+  return out;
 }
 
 function readClassifications(value: unknown): PostClassification[] | null | undefined {
@@ -625,6 +640,15 @@ function ReportCard({
       {report.duplicatePostsRemoved !== undefined && report.duplicatePostsRemoved > 0 && (
         <p>Duplicate post ids removed: {report.duplicatePostsRemoved}</p>
       )}
+      {report.invalidPostsSkipped !== undefined &&
+        Object.keys(report.invalidPostsSkipped).length > 0 && (
+          <p>
+            Invalid posts skipped:{" "}
+            {Object.entries(report.invalidPostsSkipped)
+              .map(([code, count]) => `${code}: ${count}`)
+              .join(", ")}
+          </p>
+        )}
       {report.postsWithMedia !== undefined && <p>Posts with media: {report.postsWithMedia}</p>}
       {report.assetOutlooks && report.assetOutlooks.length > 0 && (
         <>

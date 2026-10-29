@@ -21,7 +21,17 @@ const INCOMPLETE_REASON_LABEL: Record<string, string> = {
     "run Desearch HTTP request limit reached before full pagination (not a dollar cap)",
   desearch_handle_request_limit_reached:
     "per-handle Desearch HTTP request limit reached before full pagination (not a dollar cap)",
+  desearch_page_no_valid_posts:
+    "a Desearch page returned items but none could be mapped to valid posts",
+  desearch_retrieval_interrupted:
+    "Desearch retrieval stopped after a failed request; outlook uses partial posts only",
 };
+
+function formatSkipCounts(skipped: Record<string, number>): string {
+  return Object.entries(skipped)
+    .map(([code, count]) => `${code}: ${count}`)
+    .join(", ");
+}
 
 export function formatFetchIssue(
   outcome: FetchOutcome,
@@ -104,6 +114,9 @@ export function formatPersonReport(report: PersonOutlookReport): string {
   }
   if (report.duplicatePostsRemoved !== undefined && report.duplicatePostsRemoved > 0) {
     lines.push(`  Duplicate post ids removed: ${report.duplicatePostsRemoved}`);
+  }
+  if (report.invalidPostsSkipped !== undefined && Object.keys(report.invalidPostsSkipped).length > 0) {
+    lines.push(`  Invalid posts skipped: ${formatSkipCounts(report.invalidPostsSkipped)}`);
   }
   if (report.postsWithMedia !== undefined) {
     lines.push(`  Posts with media: ${report.postsWithMedia}`);

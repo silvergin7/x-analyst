@@ -40,7 +40,9 @@ export type FetchIncompleteReason =
   | "total_post_limit_reached"
   | "per_person_limit_reached"
   | "desearch_request_budget_exhausted"
-  | "desearch_handle_request_limit_reached";
+  | "desearch_handle_request_limit_reached"
+  | "desearch_page_no_valid_posts"
+  | "desearch_retrieval_interrupted";
 
 /**
  * Why Desearch stopped requesting another page for one handle.
@@ -75,14 +77,13 @@ type FetchOutcomeShape =
       fetchStopReason?: FetchStopReason;
       /** Copies of a post id dropped because a later page repeated it. */
       duplicatePostsRemoved?: number;
+      /** Invalid items skipped inside Desearch responses, by reason code. */
+      invalidPostsSkipped?: Record<string, number>;
     }
   | {
       status: "incomplete";
       handle: string;
-      reason:
-        | "total_post_limit_reached"
-        | "desearch_request_budget_exhausted"
-        | "desearch_handle_request_limit_reached";
+      reason: FetchIncompleteReason;
     }
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }
@@ -143,6 +144,7 @@ export interface RetrievalContext {
   /** Total characters of eligible post text that may be sent. */
   inputMaxChars?: number;
   duplicatePostsRemoved?: number;
+  invalidPostsSkipped?: Record<string, number>;
 }
 
 export interface PersonOutlookReport {
@@ -188,6 +190,8 @@ export interface PersonOutlookReport {
   assetOutlooks?: AssetClassOutlook[];
   /** Repeated post ids dropped across Desearch pages. */
   duplicatePostsRemoved?: number;
+  /** Invalid Desearch items skipped during retrieval, by reason code. */
+  invalidPostsSkipped?: Record<string, number>;
   /** Retrieved posts whose documented media array was non-empty. */
   postsWithMedia?: number;
 }

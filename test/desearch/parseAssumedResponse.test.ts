@@ -41,27 +41,35 @@ describe("parseTwitterUserPostsResponse", () => {
     assert.equal(parseTwitterUserPostsResponse("x", { user: {} }).ok, false);
   });
 
-  it("rejects missing required fields", () => {
+  it("skips items with missing required fields", () => {
     const result = parseTwitterUserPostsResponse("bullmacro", {
-      tweets: [{ id: "p1" }],
+      tweets: [{ id: "p1" }, validTweet({ id: "p2" })],
     });
-    assert.equal(result.ok, false);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.posts.length, 1);
+      assert.equal(result.posts[0]?.id, "p2");
+    }
   });
 
-  it("rejects missing kind booleans", () => {
+  it("skips missing kind booleans", () => {
     const result = parseTwitterUserPostsResponse("bullmacro", {
-      tweets: [validTweet({ is_retweet: undefined })],
+      tweets: [validTweet({ is_retweet: undefined }), validTweet({ id: "p2" })],
     });
-    assert.equal(result.ok, false);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.posts.length, 1);
+      assert.equal(result.invalidPostsSkipped.invalid_kind_flags, 1);
+    }
   });
 
-  it("rejects non-boolean kind flags", () => {
+  it("skips non-boolean kind flags", () => {
     const result = parseTwitterUserPostsResponse("bullmacro", {
-      tweets: [validTweet({ is_retweet: "false", is_quote_tweet: false })],
+      tweets: [validTweet({ is_retweet: "false", is_quote_tweet: false }), validTweet({ id: "p2" })],
     });
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.match(result.reason, /must be booleans/);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.invalidPostsSkipped.invalid_kind_flags, 1);
     }
   });
 
@@ -278,13 +286,35 @@ describe("parseTwitterUserPostsResponse", () => {
     if (notAnArray.ok) assert.equal(notAnArray.posts[0]?.hasAttachedMedia, undefined);
   });
 
-  it("rejects author username mismatch and duplicate ids", () => {
-    assert.equal(
-      parseTwitterUserPostsResponse("bullmacro", {
-        tweets: [validTweet({ user: { username: "othermacro" } })],
-      }).ok,
-      false,
-    );
+  it("skips author username mismatch and keeps valid items on the same page", () => {
+    const mixed = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [
+        validTweet({ id: "good" }),
+        validTweet({ id: "bad", user: { username: "othermacro" } }),
+      ],
+    });
+    assert.equal(mixed.ok, true);
+    if (mixed.ok) {
+      assert.equal(mixed.posts.length, 1);
+      assert.equal(mixed.posts[0]?.id, "good");
+      assert.equal(mixed.invalidPostsSkipped.author_mismatch, 1);
+    }
+  });
+
+  it("returns no posts when every item on the page is invalid", () => {
+    const result = parseTwitterUserPostsResponse("bullmacro", {
+      tweets: [validTweet({ user: { username: "othermacro" } }), { id: "p1" }],
+    });
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.posts.length, 0);
+      assert.equal(result.sourceItemCount, 2);
+      assert.equal(result.invalidPostsSkipped.author_mismatch, 1);
+      assert.ok(result.invalidPostsSkipped.missing_tweet_text !== undefined);
+    }
+  });
+
+  it("rejects duplicate ids with different content", () => {
     const identical = parseTwitterUserPostsResponse("bullmacro", {
       tweets: [validTweet({ id: "dup" }), validTweet({ id: "dup" })],
     });

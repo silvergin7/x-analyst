@@ -61,7 +61,7 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 
 Live fetch uses **GET** `https://api.desearch.ai/twitter/user/posts` (or `DESEARCH_API_BASE`) with query parameters **`username`** and optional **`cursor`**. The builder does **not** send **`count`** (`src/fetch/desearch/buildRequest.ts`).
 
-Pagination stops on lookback, request budgets, or no further cursor. Every valid post in a paid response is kept; duplicate IDs are removed.
+Pagination stops on lookback, request budgets, or no further cursor. Every valid post in a paid response is kept; duplicate IDs are removed. Items that fail field checks are skipped and counted per handle (`invalidPostsSkipped`). A page that returns items but none of them valid stops that handle as incomplete (`desearch_page_no_valid_posts`).
 
 ## Provider URL overrides and transport
 

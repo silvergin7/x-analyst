@@ -395,6 +395,7 @@ export async function runReport(
           lookbackCutoffMs: postsSource === "desearch" ? cutoffMs : undefined,
           inputMaxChars,
           duplicatePostsRemoved: outcome.duplicatePostsRemoved,
+          invalidPostsSkipped: outcome.invalidPostsSkipped,
         });
         reports.push(report);
       } catch (err) {

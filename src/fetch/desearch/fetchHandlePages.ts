@@ -1,13 +1,16 @@
 import { comparePostTime } from "../../analyze/analysisInput.js";
 import { dedupePostsById } from "../dedupePosts.js";
-import type { DesearchBilling, FetchStopReason, Post } from "../../types.js";
+import type { DesearchBilling, FetchIncompleteReason, FetchStopReason, Post } from "../../types.js";
 import { buildTwitterUserPostsRequest } from "./buildRequest.js";
 import {
   DesearchRetrievalError,
   desearchErrorMessage,
   type DesearchTransport,
 } from "./desearchTransport.js";
-import { parseTwitterUserPostsResponse } from "./parseAssumedResponse.js";
+import {
+  type InvalidPostsSkipped,
+  parseTwitterUserPostsResponse,
+} from "./parseAssumedResponse.js";
 
 export class DesearchPaginationError extends Error {
   readonly billing: DesearchBilling[];
@@ -27,6 +30,9 @@ export interface FetchHandlePagesResult {
   requestsUsed: number;
   billing: DesearchBilling[];
   duplicatesRemoved: number;
+  invalidPostsSkipped: InvalidPostsSkipped;
+  /** Set when pagination must stop before the feed ends. */
+  handleIncompleteReason?: FetchIncompleteReason;
 }
 
 function advanceCursor(nextCursor: string, seenCursors: Set<string>): string {
@@ -45,6 +51,15 @@ function oldestParsedMs(posts: readonly Post[]): number | null {
     if (oldest === null || ms < oldest) oldest = ms;
   }
   return oldest;
+}
+
+function mergeSkipCounts(
+  target: InvalidPostsSkipped,
+  source: InvalidPostsSkipped,
+): void {
+  for (const [code, count] of Object.entries(source)) {
+    target[code] = (target[code] ?? 0) + count;
+  }
 }
 
 /**
@@ -70,6 +85,8 @@ export async function fetchHandlePages(
   const billing: DesearchBilling[] = [];
   const seenCursors = new Set<string>();
   let withinPageDuplicates = 0;
+  const invalidPostsSkipped: InvalidPostsSkipped = {};
+  let handleIncompleteReason: FetchIncompleteReason | undefined;
 
   const moveCursor = (nextCursor: string): string => {
     try {
@@ -131,7 +148,14 @@ export async function fetchHandlePages(
 
     lastResponseHasMorePages = parsed.hasMorePages;
     withinPageDuplicates += parsed.duplicatesRemoved;
+    mergeSkipCounts(invalidPostsSkipped, parsed.invalidPostsSkipped);
     collected.push(...parsed.posts);
+
+    if (parsed.sourceItemCount > 0 && parsed.posts.length === 0) {
+      handleIncompleteReason = "desearch_page_no_valid_posts";
+      stopReason = "no_more_pages";
+      break;
+    }
 
     const oldest = oldestParsedMs(parsed.posts);
     if (oldest !== null && oldest < options.lookbackCutoffMs) {
@@ -156,5 +180,7 @@ export async function fetchHandlePages(
     requestsUsed,
     billing,
     duplicatesRemoved: deduped.duplicatesRemoved + withinPageDuplicates,
+    invalidPostsSkipped,
+    handleIncompleteReason,
   };
 }

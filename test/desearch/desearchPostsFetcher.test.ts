@@ -135,6 +135,66 @@ describe("DesearchPostsFetcher", () => {
     }
   });
 
+  it("marks a page with only invalid items as incomplete", async () => {
+    const transport: DesearchTransport = {
+      async execute() {
+        return {
+          status: 200,
+          body: tweetsBody([
+            validApiTweet("bad", "othermacro"),
+            { id: "incomplete" },
+          ]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 1,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.equal(outcomes[0]?.status, "incomplete");
+    if (outcomes[0]?.status === "incomplete") {
+      assert.equal(outcomes[0].reason, "desearch_page_no_valid_posts");
+    }
+  });
+
+  it("reports invalidPostsSkipped on an otherwise ok handle", async () => {
+    const transport: DesearchTransport = {
+      async execute() {
+        return {
+          status: 200,
+          body: tweetsBody([
+            validApiTweet("good", "bullmacro"),
+            validApiTweet("bad", "othermacro"),
+          ]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 1,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].invalidPostsSkipped?.author_mismatch, 1);
+    }
+  });
+
   it("throws when live mode is not eligible", () => {
     assert.throws(
       () =>
