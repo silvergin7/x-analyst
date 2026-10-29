@@ -8,13 +8,16 @@ import {
 import {
   LLM_TOKENIZER_CALIBRATION_FIXED,
   LLM_TOKENIZER_CALIBRATION_RATIO,
-  PRICED_LLM_MODEL,
 } from "../src/config/llmSettings.js";
+import { TEST_CHUTES_MODEL_ID, withTestChutesModelEnv } from "./support/chutesTestModel.js";
 import { classificationOutputTokenCeiling } from "../src/analyze/outputBudget.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
 
 describe("token budget", () => {
-  beforeEach(() => installByteQuarterMockTokenizer());
+  beforeEach(() => {
+    installByteQuarterMockTokenizer();
+    withTestChutesModelEnv(process.env);
+  });
   afterEach(() => clearMockTokenizer());
 
   it("counts response_format tokens separately from chat messages", () => {
@@ -35,7 +38,7 @@ describe("token budget", () => {
     ];
     const body = buildChutesRequestBody(
       buildChatMessages("Question?", sent, "2026-10-10", "desearch"),
-      PRICED_LLM_MODEL,
+      TEST_CHUTES_MODEL_ID,
       classificationOutputTokenCeiling(1, process.env),
       ["p1"],
     );
@@ -52,7 +55,7 @@ describe("token budget", () => {
   it("mutation: inputTokensUpper includes response_format tokens", () => {
     const body = buildChutesRequestBody(
       buildChatMessages("Q?", [], "2026-10-10", "desearch"),
-      PRICED_LLM_MODEL,
+      TEST_CHUTES_MODEL_ID,
       classificationOutputTokenCeiling(0, process.env),
       [],
     );

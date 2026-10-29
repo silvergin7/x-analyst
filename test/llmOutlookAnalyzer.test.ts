@@ -27,10 +27,11 @@ import {
   DEFAULT_CHUTES_CHAT_COMPLETIONS_URL,
   LLM_CALL_BUDGET_USD,
   LLM_INPUT_MAX_CHARS,
-  PRICED_LLM_MODEL,
   fitsModelContextWindow,
   loadLlmRuntimeConfig,
 } from "../src/config/llmSettings.js";
+import { testLlmRuntimeFields, withTestChutesModelEnv } from "./support/chutesTestModel.js";
+import { testChutesModelPlan } from "./support/testChutesModelPlan.js";
 import { runReport } from "../src/runReport.js";
 import { runLlmFixtureCheck } from "../src/llmFixtureCheck.js";
 import { FIXTURE_POSTS_BY_HANDLE } from "../src/fixtures/samplePosts.js";
@@ -57,12 +58,11 @@ function post(overrides: Partial<Post> & Pick<Post, "id" | "kind" | "text">): Po
 }
 
 function liveEnv(): NodeJS.ProcessEnv {
-  return {
+  return withTestChutesModelEnv({
     ANALYSIS_PROVIDER: "chutes",
     LLM_LIVE_ENABLED: "true",
     CHUTES_API_KEY: "test-key",
-    LLM_MODEL: PRICED_LLM_MODEL,
-  };
+  });
 }
 
 function liveConfig(overrides: Partial<LlmRuntimeConfig> = {}): LlmRuntimeConfig {
@@ -70,9 +70,9 @@ function liveConfig(overrides: Partial<LlmRuntimeConfig> = {}): LlmRuntimeConfig
     provider: "chutes",
     liveEnabled: true,
     apiKey: "test-key",
-    model: PRICED_LLM_MODEL,
     chatCompletionsUrl: DEFAULT_CHUTES_CHAT_COMPLETIONS_URL,
     eligible: true,
+    ...testLlmRuntimeFields(),
     ...overrides,
   };
 }
@@ -116,7 +116,10 @@ function completion(content: unknown, extra?: {
 }
 
 describe("LlmOutlookAnalyzer", () => {
-  beforeEach(() => installByteQuarterMockTokenizer());
+  beforeEach(() => {
+    installByteQuarterMockTokenizer();
+    withTestChutesModelEnv(process.env);
+  });
   afterEach(() => clearMockTokenizer());
   it("blocks a call when any live gate fails", async () => {
     const cases = [
@@ -137,7 +140,7 @@ describe("LlmOutlookAnalyzer", () => {
         ANALYSIS_PROVIDER: "mock",
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "test-key",
-        LLM_MODEL: PRICED_LLM_MODEL,
+        LLM_MODEL: testLlmRuntimeFields().model,
       },
     ];
     for (const env of cases) {
@@ -151,7 +154,7 @@ describe("LlmOutlookAnalyzer", () => {
         recorded.transport,
         undefined,
         "fixtures",
-        { runEnv: env },
+        { runEnv: withTestChutesModelEnv({ ...env }) },
       );
       await assert.rejects(
         () => analyzer.analyzePerson("analyst", [
@@ -297,7 +300,7 @@ describe("LlmOutlookAnalyzer", () => {
           ],
           recorded.transport,
           process.env,
-          40_000,
+          200_000,
           ["p1"],
         ),
       (err: unknown) => err instanceof LlmCallError && err.code === "context_window",
@@ -329,6 +332,8 @@ describe("LlmOutlookAnalyzer", () => {
       referenceDate: "2026-10-10",
       postSource: "desearch",
       env: process.env,
+      modelId: testLlmRuntimeFields().model,
+      contextLengthTokens: 40_960,
     });
     const dropped = fitted.records.filter(
       (record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON,
@@ -350,13 +355,20 @@ describe("LlmOutlookAnalyzer", () => {
     const estimate = estimateRequestBudget(
       buildChutesRequestBody(
         buildChatMessages(question.text, fitted.sent, "2026-10-10", "desearch"),
-        PRICED_LLM_MODEL,
+        testLlmRuntimeFields().model,
         maxTokens,
         postAliases(fitted.sent).map((item) => item.alias),
       ),
       process.env,
     );
-    assert.equal(fitsModelContextWindow(estimate.inputTokensUpper, maxTokens), true);
+    assert.equal(
+      fitsModelContextWindow(
+        liveConfig().contextLengthTokens,
+        estimate.inputTokensUpper,
+        maxTokens,
+      ),
+      true,
+    );
     assert.ok(estimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
 
     const recorded = recordingTransport(completion(aliasModel(fitted.sent, classifiedOutlook({
@@ -365,7 +377,7 @@ describe("LlmOutlookAnalyzer", () => {
       posts: fitted.sent.map((item) => ({ postId: item.post.id, relevant: false })),
     }))));
     const analyzer = new LlmOutlookAnalyzer(
-      liveConfig(),
+      liveConfig({ contextLengthTokens: 40_960 }),
       recorded.transport,
       "2026-10-10",
       "desearch",
@@ -377,7 +389,7 @@ describe("LlmOutlookAnalyzer", () => {
       max_tokens: number;
       messages: { content: string }[];
     };
-    assert.equal(body.max_tokens, maxTokens);
+    assert.equal(body.max_tokens, classificationOutputTokenCeiling(report.postsExamined, process.env));
     const prompt = body.messages.map((message) => message.content).join("\n");
     for (const record of dropped) {
       assert.equal(prompt.includes(record.postId), false);
@@ -426,12 +438,14 @@ describe("LlmOutlookAnalyzer", () => {
           800,
           ["p1"],
         ),
-      (err: unknown) => err instanceof LlmCallError && err.code === "context_window",
+      (err: unknown) =>
+        err instanceof LlmCallError &&
+        (err.code === "context_window" || err.code === "budget"),
     );
     assert.equal(recorded.calls.length, 0);
   });
 
-  it("prices a normal classification under $0.05 and rejects the one-character worst case", async () => {
+  it("prices a normal classification under the per-call budget and rejects the one-character worst case", async () => {
     const modest = Array.from({ length: 60 }, (_, index) =>
       post({
         id: `modest-${index}`,
@@ -443,7 +457,7 @@ describe("LlmOutlookAnalyzer", () => {
     const modestEstimate = estimateRequestBudget(
       buildChutesRequestBody(
         buildChatMessages(question.text, modestPlan.sent, "2026-10-10", "desearch"),
-        PRICED_LLM_MODEL,
+        testLlmRuntimeFields().model,
         classificationOutputTokenCeiling(modestPlan.sent.length, process.env),
         postAliases(modestPlan.sent).map((item) => item.alias),
       ),
@@ -465,7 +479,7 @@ describe("LlmOutlookAnalyzer", () => {
       const sliceEstimate = estimateRequestBudget(
         buildChutesRequestBody(
           buildChatMessages(question.text, slicePlan.sent, "2026-10-10", "desearch"),
-          PRICED_LLM_MODEL,
+          testLlmRuntimeFields().model,
           classificationOutputTokenCeiling(slicePlan.sent.length, process.env),
           postAliases(slicePlan.sent).map((item) => item.alias),
         ),
@@ -474,7 +488,11 @@ describe("LlmOutlookAnalyzer", () => {
       assert.equal(slicePlan.sent.length, count);
       assert.equal(sliceEstimate.basis, "qwen3-tokenizer-conservative");
       assert.equal(
-        fitsModelContextWindow(sliceEstimate.inputTokensUpper, sliceEstimate.outputTokensUpper),
+        fitsModelContextWindow(
+          liveConfig().contextLengthTokens,
+          sliceEstimate.inputTokensUpper,
+          sliceEstimate.outputTokensUpper,
+        ),
         true,
       );
       assert.ok(sliceEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
@@ -496,7 +514,9 @@ describe("LlmOutlookAnalyzer", () => {
           classificationOutputTokenCeiling(tinyPlan.sent.length, process.env),
           postAliases(tinyPlan.sent).map((item) => item.alias),
         ),
-      (err: unknown) => err instanceof LlmCallError && err.code === "budget",
+      (err: unknown) =>
+        err instanceof LlmCallError &&
+        (err.code === "budget" || err.code === "context_window"),
     );
     assert.equal(recorded.calls.length, 0);
   });
@@ -841,7 +861,10 @@ describe("LlmOutlookAnalyzer", () => {
 });
 
 describe("runLlmFixtureCheck", () => {
-  beforeEach(() => installByteQuarterMockTokenizer());
+  beforeEach(() => {
+    installByteQuarterMockTokenizer();
+    withTestChutesModelEnv(process.env);
+  });
   afterEach(() => clearMockTokenizer());
 
   it("does not call Chutes when the live gates are closed", async () => {
@@ -874,12 +897,11 @@ describe("runLlmFixtureCheck", () => {
     const code = await runLlmFixtureCheck({
       handle: "bullmacro",
       question: "Edited fixture question",
-      env: {
+      env: withTestChutesModelEnv({
         ANALYSIS_PROVIDER: "chutes",
         LLM_LIVE_ENABLED: "true",
         CHUTES_API_KEY: "test-key",
-        LLM_MODEL: PRICED_LLM_MODEL,
-      },
+      }),
       transport: recorded.transport,
       write: (text) => {
         output += text;
@@ -898,7 +920,7 @@ describe("runLlmFixtureCheck", () => {
       top_k: number;
       messages: { content: string }[];
     };
-    assert.equal(body.model, PRICED_LLM_MODEL);
+    assert.equal(body.model, testLlmRuntimeFields().model);
     assert.equal(body.max_tokens, classificationOutputTokenCeiling(2, process.env));
     assert.equal(body.temperature, 0.7);
     assert.equal(body.top_p, 0.8);

@@ -1,4 +1,5 @@
-import { LLM_NON_THINKING_SAMPLING, PRICED_LLM_MODEL } from "../config/llmSettings.js";
+import { LLM_NON_THINKING_SAMPLING } from "../config/llmSettings.js";
+import type { ChutesModelPricing } from "../config/llmSettings.js";
 import { estimateRequestBudgetFromTokenizer } from "./tokenBudget.js";
 import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import type { BudgetEstimate, PostSource } from "../types.js";
@@ -214,6 +215,7 @@ export function buildChutesRequestBody(
 export function estimateRequestBudget(
   body: ChutesRequestBody,
   env: NodeJS.ProcessEnv,
+  pricingOverride?: ChutesModelPricing,
 ): BudgetEstimate {
-  return estimateRequestBudgetFromTokenizer(body, env);
+  return estimateRequestBudgetFromTokenizer(body, env, pricingOverride);
 }

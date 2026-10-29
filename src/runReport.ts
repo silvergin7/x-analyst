@@ -14,6 +14,7 @@ import {
 } from "./config/desearchSettings.js";
 import {
   LLM_MAX_QUESTION_CHARS,
+  applyChutesModelToEnv,
   loadInputMaxChars,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
@@ -42,6 +43,7 @@ import {
   readRepositoryCommit,
   saveSlice,
 } from "./runtime/savedSlice.js";
+import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import type {
   AnalysisProviderLabel,
   AnalysisQuestion,
@@ -88,6 +90,7 @@ export interface RunReportOptions {
   chutesTransport?: ChutesTransport;
   /** Called with the local estimate after it passes the checks and before HTTP. */
   onEstimate?: (estimate: BudgetEstimate) => void;
+  chutesModelPlan?: ChutesModelPlan;
 }
 
 /** Configuration or question rejected before any paid request. */
@@ -171,6 +174,9 @@ export async function runReport(
 
   const postsSelected = loadPostsProviderConfig(env).provider;
   const desearchSettings = loadDesearchSettings(env);
+  if (options.chutesModelPlan !== undefined) {
+    applyChutesModelToEnv(env, options.chutesModelPlan.primary.model);
+  }
   const llm = loadLlmRuntimeConfig(env);
   const problems: string[] = [];
   if (!options.replayPath && postsSelected === "desearch" && !desearchSettings.liveEligible) {

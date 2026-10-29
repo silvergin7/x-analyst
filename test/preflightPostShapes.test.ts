@@ -5,6 +5,8 @@ import { fitAnalysisInputToContextWindow } from "../src/analyze/fitContextWindow
 import { chutesWorstCaseEstimateUsd } from "../src/analyzePreflight.js";
 import { modestPreflightPosts } from "../src/analyze/preflightPostShapes.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
+import { withTestChutesModelEnv } from "./support/chutesTestModel.js";
+import { testChutesModelPlan } from "./support/testChutesModelPlan.js";
 
 describe("preflight post shapes", () => {
   beforeEach(() => installByteQuarterMockTokenizer());
@@ -23,13 +25,15 @@ describe("preflight post shapes", () => {
   });
 
   it("preflight Chutes estimate grows with modest post count for one handle", () => {
-    const env: NodeJS.ProcessEnv = {};
+    const env = withTestChutesModelEnv({});
+    const plan = testChutesModelPlan();
     const onePost = chutesWorstCaseEstimateUsd({
       question: "What is the outlook?",
       referenceDate: "2026-10-10",
       handles: ["bullmacro"],
       maxRetrievedPostsPerHandle: 1,
       env,
+      chutesModelPlan: plan,
     });
     const sixtyPosts = chutesWorstCaseEstimateUsd({
       question: "What is the outlook?",
@@ -37,6 +41,7 @@ describe("preflight post shapes", () => {
       handles: ["bullmacro"],
       maxRetrievedPostsPerHandle: 60,
       env,
+      chutesModelPlan: plan,
     });
     assert.ok(sixtyPosts > onePost * 5);
     const fitted = fitAnalysisInputToContextWindow(

@@ -4,7 +4,7 @@ import { buildChutesRequestBody, buildChatMessages } from "../src/analyze/llmPro
 import { classificationOutputTokenCeiling } from "../src/analyze/outputBudget.js";
 import { clearQwenTokenizerRuntimeCacheForTests, getQwenTokenizerRuntime } from "../src/analyze/qwenTokenizerRuntime.js";
 import { countRequestInputTokens } from "../src/analyze/tokenBudget.js";
-import { PRICED_LLM_MODEL } from "../src/config/llmSettings.js";
+import { TEST_CHUTES_MODEL_ID } from "./support/chutesTestModel.js";
 import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
 import { existsSync } from "node:fs";
@@ -22,7 +22,7 @@ describe("run env for token counting", () => {
       installByteQuarterMockTokenizer();
       const body = buildChutesRequestBody(
         buildChatMessages("Q?", [], "2026-10-10", "fixtures"),
-        PRICED_LLM_MODEL,
+        TEST_CHUTES_MODEL_ID,
         classificationOutputTokenCeiling(1, process.env),
         ["p1"],
       );
@@ -38,7 +38,7 @@ describe("run env for token counting", () => {
     const maxTokens = classificationOutputTokenCeiling(1, process.env);
     const body = buildChutesRequestBody(
       buildChatMessages("Q?", [], "2026-10-10", "fixtures"),
-      PRICED_LLM_MODEL,
+      TEST_CHUTES_MODEL_ID,
       maxTokens,
       ["p1"],
     );

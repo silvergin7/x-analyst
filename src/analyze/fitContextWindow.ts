@@ -1,4 +1,4 @@
-import { PRICED_LLM_MODEL, fitsModelContextWindow } from "../config/llmSettings.js";
+import { fitsModelContextWindow, loadLlmRuntimeConfig } from "../config/llmSettings.js";
 import type { PostSource } from "../types.js";
 import {
   BEYOND_CONTEXT_WINDOW_REASON,
@@ -19,19 +19,33 @@ export interface ContextWindowFitInput {
   referenceDate: string;
   postSource: PostSource;
   env: NodeJS.ProcessEnv;
+  modelId?: string;
+  contextLengthTokens?: number;
+}
+
+function resolveModelContext(input: ContextWindowFitInput): {
+  modelId: string;
+  contextLengthTokens: number;
+} {
+  if (input.modelId !== undefined && input.contextLengthTokens !== undefined) {
+    return { modelId: input.modelId, contextLengthTokens: input.contextLengthTokens };
+  }
+  const llm = loadLlmRuntimeConfig(input.env);
+  return { modelId: llm.model, contextLengthTokens: llm.contextLengthTokens };
 }
 
 function estimateFits(sent: readonly SentPost[], input: ContextWindowFitInput): boolean {
+  const { modelId, contextLengthTokens } = resolveModelContext(input);
   const aliases = postAliases(sent).map((item) => item.alias);
   const maxTokens = classificationOutputTokenCeiling(sent.length, input.env);
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, [...sent], input.referenceDate, input.postSource),
-    PRICED_LLM_MODEL,
+    modelId,
     maxTokens,
     aliases,
   );
   const estimate = estimateRequestBudget(body, input.env);
-  return fitsModelContextWindow(estimate.inputTokensUpper, maxTokens);
+  return fitsModelContextWindow(contextLengthTokens, estimate.inputTokensUpper, maxTokens);
 }
 
 /**

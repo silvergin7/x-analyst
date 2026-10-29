@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { reportFitShape } from "../src/analyze/fitBindingReport.js";
 import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
 import type { Post } from "../src/types.js";
+import { withTestChutesModelEnv } from "./support/chutesTestModel.js";
 
 const vendorReady =
   existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`) &&
@@ -45,7 +46,7 @@ describe("fit binding report with vendor tokenizer", () => {
         handle: "analyst",
         question,
         referenceDate,
-        env: process.env,
+        env: withTestChutesModelEnv(process.env),
       });
       assert.equal(report.postCount, count);
       assert.equal(report.postsSent, count);
@@ -60,7 +61,7 @@ describe("fit binding report with vendor tokenizer", () => {
         handle: "analyst",
         question,
         referenceDate,
-        env: process.env,
+        env: withTestChutesModelEnv(process.env),
       });
       assert.equal(report.postCount, count);
       assert.equal(report.bindingLimit, "LLM_INPUT_MAX_CHARS");

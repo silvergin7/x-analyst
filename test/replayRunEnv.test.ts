@@ -15,6 +15,8 @@ import {
 import type { FetchOutcome } from "../src/types.js";
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+const catalogFixturePath = path.join(repoRoot, "test/fixtures/chutesModelsCatalog.json");
+const hfFixtureDir = path.join(repoRoot, "test/fixtures/hf");
 const vendorReady =
   existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`) &&
   existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer_config.json`);
@@ -31,6 +33,8 @@ function chutesOnlyEnvLines(extra: string[] = []): string[] {
 
 function minimalShellEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
+    CHUTES_CATALOG_FIXTURE_PATH: catalogFixturePath,
+    HF_MODEL_INFO_FIXTURE_DIR: hfFixtureDir,
     PATH: process.env.PATH ?? "",
     HOME: process.env.HOME ?? tmpdir(),
     X_ANALYST_SLICE_DIR:

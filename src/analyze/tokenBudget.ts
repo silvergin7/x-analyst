@@ -1,7 +1,9 @@
 import {
   LLM_TOKENIZER_CALIBRATION_FIXED,
   LLM_TOKENIZER_CALIBRATION_RATIO,
+  loadLlmRuntimeConfig,
   priceTokenCeiling,
+  type ChutesModelPricing,
 } from "../config/llmSettings.js";
 import type { BudgetEstimate } from "../types.js";
 import { getQwenTokenizerRuntime } from "./qwenTokenizerRuntime.js";
@@ -39,12 +41,25 @@ export function countRequestInputTokens(
   };
 }
 
+function resolvePricing(
+  env: NodeJS.ProcessEnv,
+  pricingOverride: ChutesModelPricing | undefined,
+): ChutesModelPricing {
+  if (pricingOverride !== undefined) return pricingOverride;
+  return loadLlmRuntimeConfig(env).modelPricing;
+}
+
 export function estimateRequestBudgetFromTokenizer(
   body: ChutesRequestBody,
   env: NodeJS.ProcessEnv,
+  pricingOverride?: ChutesModelPricing,
 ): BudgetEstimate {
   const input = countRequestInputTokens(body, env);
-  const priced = priceTokenCeiling(input.inputTokensUpper, body.max_tokens);
+  const priced = priceTokenCeiling(
+    input.inputTokensUpper,
+    body.max_tokens,
+    resolvePricing(env, pricingOverride),
+  );
   return {
     ...priced,
     basis: "qwen3-tokenizer-conservative",

@@ -1,0 +1,6 @@
+{
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "gated": false,
+  "private": false,
+  "siblings": [{ "rfilename": "tokenizer.json" }, { "rfilename": "config.json" }]
+}

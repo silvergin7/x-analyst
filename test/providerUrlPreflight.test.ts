@@ -14,6 +14,8 @@ import {
   validateProviderOverrides,
 } from "../src/runtime/providerUrlPreflight.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
+import { withTestChutesModelEnv } from "./support/chutesTestModel.js";
+import { testChutesModelPlan } from "./support/testChutesModelPlan.js";
 
 describe("provider URL preflight", () => {
   it("formats provider origins without path or query", () => {
@@ -126,14 +128,14 @@ describe("provider URL preflight", () => {
         handles: ["bullmacro"],
         question: "Q",
         referenceDate: "2026-10-10",
-        model: "Qwen/Qwen3-32B-TEE",
         replay: false,
         offline: false,
-        env: {
+        chutesModelPlan: testChutesModelPlan(),
+        env: withTestChutesModelEnv({
           DESEARCH_MAX_REQUESTS_PER_RUN: "5",
           DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
           DESEARCH_API_BASE: "http://127.0.0.1:9",
-        },
+        }),
       });
       assert.match(lines[0]!, /Warning: DESEARCH_API_BASE is not the default/);
     } finally {
@@ -148,14 +150,14 @@ describe("provider URL preflight", () => {
         handles: ["bullmacro"],
         question: "Q",
         referenceDate: "2026-10-10",
-        model: "Qwen/Qwen3-32B-TEE",
         replay: false,
         offline: false,
-        env: {
+        chutesModelPlan: testChutesModelPlan(),
+        env: withTestChutesModelEnv({
           DESEARCH_MAX_REQUESTS_PER_RUN: "5",
           DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
           CHUTES_CHAT_COMPLETIONS_URL: "http://127.0.0.1:9/v1/chat/completions",
-        },
+        }),
       });
       const chutesHost = lines.find((line) => line.startsWith("Chutes host:"));
       assert.equal(chutesHost, "Chutes host: http://127.0.0.1:9");

@@ -24,7 +24,7 @@ import {
   type ChutesTransport,
 } from "./chutesClient.js";
 import { buildChatMessages } from "./llmPrompt.js";
-import type { LlmRuntimeConfig } from "../config/llmSettings.js";
+import { loadLlmRuntimeConfig, type LlmRuntimeConfig } from "../config/llmSettings.js";
 import type { OutlookAnalyzer } from "./outlookAnalyzer.js";
 import { validateEvidenceIntegrity } from "./outlookAnalyzer.js";
 import { checkClassifications, parseModelOutlook, resolveAliasClassifications } from "./classification.js";
@@ -100,6 +100,9 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     retrieval: RetrievalContext,
   ): Promise<PersonOutlookReport> {
     assertQuestionBound(question.text);
+    const fitContext = this.config.eligible
+      ? this.config
+      : loadLlmRuntimeConfig(this.runEnv);
     const plan = fitAnalysisInputToContextWindow(
       planAnalysisInput(posts, handle, {
         inputMaxChars: retrieval.inputMaxChars,
@@ -110,6 +113,8 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
         referenceDate: this.referenceDate,
         postSource: this.postSource,
         env: this.runEnv,
+        modelId: fitContext.model,
+        contextLengthTokens: fitContext.contextLengthTokens,
       },
     );
     const base = {

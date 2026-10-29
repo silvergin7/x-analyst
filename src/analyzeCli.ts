@@ -10,7 +10,15 @@ import {
 } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
 import { printAnalyzePreflight } from "./analyzePreflight.js";
+import { createFetchChutesCatalogTransport } from "./analyze/chutesCatalogTransport.js";
+import {
+  buildChutesModelPlanForRun,
+  ChutesPreflightPlanError,
+} from "./analyze/buildChutesModelPlanForRun.js";
 import { liveTokenizerPreflightMessage } from "./analyze/qwenTokenizerPins.js";
+import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
+import { applyChutesModelToEnv } from "./config/llmSettings.js";
+import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import { validateLiveDesearchRequestLimits } from "./config/desearchSettings.js";
 import { serializeRunReportResult } from "./format/runReportJson.js";
 import { formatBudgetEstimate } from "./format/llmFixtureReport.js";
@@ -121,7 +129,8 @@ async function main(): Promise<void> {
 
   const referenceDate = options.asOf ?? utcReferenceDate();
   const question = options.questionFlagSeen ? options.question : DEFAULT_QUESTION;
-  const llm = loadLlmRuntimeConfig(runEnv);
+
+  let chutesModelPlan: ChutesModelPlan | undefined;
 
   if (!options.offline) {
     const urlOverrides = validateProviderOverrides(runEnv, {
@@ -149,7 +158,27 @@ async function main(): Promise<void> {
         return;
       }
     }
+    try {
+      chutesModelPlan = await buildChutesModelPlanForRun({
+        env: runEnv,
+        handles,
+        question,
+        referenceDate,
+        replay: options.replayPath !== undefined,
+        catalogTransport: createFetchChutesCatalogTransport(),
+        hfTransport: createHuggingFaceModelInfoTransport(runEnv),
+      });
+      applyChutesModelToEnv(runEnv, chutesModelPlan.primary.model);
+    } catch (err) {
+      const message =
+        err instanceof ChutesPreflightPlanError ? err.message : "Chutes preflight failed";
+      process.stderr.write(`Preflight error: ${message}\n`);
+      process.exitCode = 1;
+      return;
+    }
   }
+
+  const llm = loadLlmRuntimeConfig(runEnv);
 
   const inputMaxChars = readInputMaxCharsStrict(runEnv);
   if (!inputMaxChars.ok) {
@@ -162,10 +191,10 @@ async function main(): Promise<void> {
     handles,
     question,
     referenceDate,
-    model: llm.model,
     replay: options.replayPath !== undefined,
     offline: options.offline,
     env: runEnv,
+    chutesModelPlan,
   });
 
   const confirmed = await confirmProceed({
@@ -191,6 +220,7 @@ async function main(): Promise<void> {
         fresh: options.fresh,
         replayPath: options.replayPath,
         env: runEnv,
+        chutesModelPlan,
         onEstimate: (estimate) => {
           process.stdout.write(`${formatBudgetEstimate(estimate)}\n`);
         },

@@ -1,7 +1,6 @@
 import {
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
-  LLM_CONTEXT_WINDOW_TOKENS,
   LLM_REQUEST_TIMEOUT_MS,
   fitsModelContextWindow,
   type LlmRuntimeConfig,
@@ -198,8 +197,14 @@ export async function requestChutesCompletion(
       estimate,
     );
   }
-  if (!fitsModelContextWindow(estimate.inputTokensUpper, requestBody.max_tokens)) {
-    const budget = LLM_CONTEXT_WINDOW_TOKENS - LLM_CONTEXT_SAFETY_MARGIN_TOKENS;
+  if (
+    !fitsModelContextWindow(
+      config.contextLengthTokens,
+      estimate.inputTokensUpper,
+      requestBody.max_tokens,
+    )
+  ) {
+    const budget = config.contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS;
     throw new LlmCallError(
       "context_window",
       `Input ceiling ${estimate.inputTokensUpper} plus max_tokens ${requestBody.max_tokens} exceeds the context window budget of ${budget}`,

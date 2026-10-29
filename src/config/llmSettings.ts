@@ -13,28 +13,19 @@ export function loadChutesChatCompletionsUrl(env: NodeJS.ProcessEnv = process.en
   return raw;
 }
 
-/** The only model whose rates are coded for the local budget check. */
-export const PRICED_LLM_MODEL = "Qwen/Qwen3-32B-TEE";
-
-/** max_model_len for PRICED_LLM_MODEL on Chutes. */
-export const LLM_CONTEXT_WINDOW_TOKENS = 40_960;
-
 /**
  * Tokens held back so the input ceiling plus max_tokens stays inside the context window.
  */
 export const LLM_CONTEXT_SAFETY_MARGIN_TOKENS = 1_024;
 
-/** Published Chutes standard input rate for PRICED_LLM_MODEL, USD per 1M tokens. */
-export const LLM_INPUT_USD_PER_MILLION = 0.104;
-
-/** Published Chutes standard output rate for PRICED_LLM_MODEL, USD per 1M tokens. */
-export const LLM_OUTPUT_USD_PER_MILLION = 0.416;
+/** Reserved output tokens for model thinking in eligibility and budgets. */
+export const LLM_THINKING_ALLOWANCE_TOKENS = 16_000;
 
 /**
- * Local ceiling for one later approved fixture call.
+ * Local ceiling for one Chutes request worst-case estimate.
  * Chutes does not enforce this dollar amount.
  */
-export const LLM_CALL_BUDGET_USD = 0.05;
+export const LLM_CALL_BUDGET_USD = 0.2;
 
 /**
  * A handle fails when unclassified sent posts are a larger share than this.
@@ -108,12 +99,19 @@ export const LLM_NON_THINKING_SAMPLING = {
   top_k: 20,
 } as const;
 
+export interface ChutesModelPricing {
+  promptUsdPerMillion: number;
+  completionUsdPerMillion: number;
+}
+
 export interface LlmRuntimeConfig {
   provider: string;
   liveEnabled: boolean;
   apiKey: string;
   model: string;
   chatCompletionsUrl: string;
+  modelPricing: ChutesModelPricing;
+  contextLengthTokens: number;
   eligible: boolean;
   reason?: string;
 }
@@ -152,10 +150,26 @@ export function loadLlmRuntimeConfig(
   const liveEnabled = readEnv(env, "LLM_LIVE_ENABLED") === "true";
   const apiKey = readEnv(env, "CHUTES_API_KEY");
   const modelRaw = readEnv(env, "LLM_MODEL");
-  const model = modelRaw === "" ? PRICED_LLM_MODEL : modelRaw;
+  const model = modelRaw;
   const chatCompletionsUrl = loadChutesChatCompletionsUrl(env);
+  const pricingPrompt = readEnv(env, "CHUTES_MODEL_PROMPT_USD_PER_MILLION");
+  const pricingCompletion = readEnv(env, "CHUTES_MODEL_COMPLETION_USD_PER_MILLION");
+  const contextRaw = readEnv(env, "CHUTES_MODEL_CONTEXT_LENGTH");
+  const modelPricing: ChutesModelPricing = {
+    promptUsdPerMillion: Number(pricingPrompt),
+    completionUsdPerMillion: Number(pricingCompletion),
+  };
+  const contextLengthTokens = Number(contextRaw);
 
-  const base = { provider, liveEnabled, apiKey, model, chatCompletionsUrl };
+  const base = {
+    provider,
+    liveEnabled,
+    apiKey,
+    model,
+    chatCompletionsUrl,
+    modelPricing,
+    contextLengthTokens,
+  };
 
   if (provider !== "chutes") {
     return {
@@ -178,11 +192,25 @@ export function loadLlmRuntimeConfig(
       reason: "CHUTES_API_KEY must be a real key, not the placeholder",
     };
   }
-  if (model !== PRICED_LLM_MODEL) {
+  if (model === "") {
     return {
       ...base,
       eligible: false,
-      reason: `LLM_MODEL ${model} has no coded rate. Reassess the estimate before use`,
+      reason: "Chutes model is not selected",
+    };
+  }
+  if (
+    !Number.isFinite(modelPricing.promptUsdPerMillion) ||
+    modelPricing.promptUsdPerMillion <= 0 ||
+    !Number.isFinite(modelPricing.completionUsdPerMillion) ||
+    modelPricing.completionUsdPerMillion <= 0 ||
+    !Number.isFinite(contextLengthTokens) ||
+    contextLengthTokens <= 0
+  ) {
+    return {
+      ...base,
+      eligible: false,
+      reason: "Chutes model pricing or context window is not configured",
     };
   }
 
@@ -190,20 +218,35 @@ export function loadLlmRuntimeConfig(
 }
 
 /** True when the input ceiling plus max_tokens fits in the context window minus the safety margin. */
-export function fitsModelContextWindow(inputTokensUpper: number, maxTokens: number): boolean {
+export function fitsModelContextWindow(
+  contextLengthTokens: number,
+  inputTokensUpper: number,
+  maxTokens: number,
+): boolean {
   return (
     inputTokensUpper + maxTokens <=
-    LLM_CONTEXT_WINDOW_TOKENS - LLM_CONTEXT_SAFETY_MARGIN_TOKENS
+    contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS
   );
 }
 
-/** Pessimistic USD ceiling from an input-token upper bound and the coded output cap. */
+/** Pessimistic USD ceiling from token counts and catalog pricing. */
 export function priceTokenCeiling(
   inputTokensUpper: number,
-  outputTokensUpper: number = LLM_MAX_OUTPUT_TOKENS,
+  outputTokensUpper: number,
+  pricing: ChutesModelPricing,
 ): Pick<BudgetEstimate, "estimatedUsd" | "inputTokensUpper" | "outputTokensUpper"> {
   const estimatedUsd =
-    (inputTokensUpper * LLM_INPUT_USD_PER_MILLION) / 1_000_000 +
-    (outputTokensUpper * LLM_OUTPUT_USD_PER_MILLION) / 1_000_000;
+    (inputTokensUpper * pricing.promptUsdPerMillion) / 1_000_000 +
+    (outputTokensUpper * pricing.completionUsdPerMillion) / 1_000_000;
   return { inputTokensUpper, outputTokensUpper, estimatedUsd };
+}
+
+export function applyChutesModelToEnv(
+  env: NodeJS.ProcessEnv,
+  model: { id: string; pricing: ChutesModelPricing; contextLength: number },
+): void {
+  env.LLM_MODEL = model.id;
+  env.CHUTES_MODEL_PROMPT_USD_PER_MILLION = String(model.pricing.promptUsdPerMillion);
+  env.CHUTES_MODEL_COMPLETION_USD_PER_MILLION = String(model.pricing.completionUsdPerMillion);
+  env.CHUTES_MODEL_CONTEXT_LENGTH = String(model.contextLength);
 }
