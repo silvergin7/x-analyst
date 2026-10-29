@@ -149,9 +149,10 @@ export async function runLlmFixtureCheck(input: FixtureCheckInput): Promise<numb
       buildChutesRequestBody(
         buildChatMessages(input.question, plan.sent, referenceDate),
         config.model,
-        classificationOutputTokenCeiling(plan.sent.length),
+        classificationOutputTokenCeiling(plan.sent.length, input.env),
         postAliases(plan.sent).map((item) => item.alias),
       ),
+      input.env,
     );
     input.write(`${formatBudgetEstimate(estimate)}\n`);
     if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
@@ -160,7 +161,13 @@ export async function runLlmFixtureCheck(input: FixtureCheckInput): Promise<numb
     }
   }
 
-  const analyzer = new LlmOutlookAnalyzer(config, input.transport, referenceDate);
+  const analyzer = new LlmOutlookAnalyzer(
+    config,
+    input.transport,
+    referenceDate,
+    "desearch",
+    { runEnv: input.env },
+  );
   try {
     const report = await analyzer.analyzePerson(
       outcome.handle,

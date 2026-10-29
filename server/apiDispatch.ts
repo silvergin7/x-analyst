@@ -65,7 +65,13 @@ export async function handleApiRequest(
   }
 
   if (method === "GET" && url.pathname.startsWith("/api/reports/")) {
-    const basename = decodeURIComponent(url.pathname.slice("/api/reports/".length));
+    let basename: string;
+    try {
+      basename = decodeURIComponent(url.pathname.slice("/api/reports/".length));
+    } catch {
+      sendJson(res, 400, { error: "Malformed report path" });
+      return;
+    }
     try {
       sendJson(res, 200, readReportJson(basename));
     } catch (err) {
@@ -73,7 +79,15 @@ export async function handleApiRequest(
         sendJson(res, 400, { error: err.message });
         return;
       }
-      sendJson(res, 404, { error: "Report not found" });
+      const code =
+        err !== null && typeof err === "object" && "code" in err
+          ? (err as { code?: string }).code
+          : undefined;
+      if (code === "ENOENT") {
+        sendJson(res, 404, { error: "Report not found" });
+        return;
+      }
+      sendJson(res, 500, { error: "Could not read report" });
     }
     return;
   }

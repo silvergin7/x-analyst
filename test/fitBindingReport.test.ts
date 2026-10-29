@@ -29,6 +29,7 @@ describe("fit binding report", () => {
       handle: "analyst",
       question,
       referenceDate,
+      env: process.env,
     });
     assert.equal(report.postsSent, 12);
     assert.equal(report.bindingLimit, "none");

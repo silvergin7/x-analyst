@@ -35,3 +35,9 @@ If the request is still too large, the oldest eligible posts are dropped and lis
 Before you confirm a live run, the CLI prints a summed **worst-case local estimate** across handles using synthetic modest and long post shapes and taking the larger per handle (`src/analyzePreflight.ts`). That is not a provider charge.
 
 Desearch list-price preflight uses a separate formula; see [reference.md](reference.md).
+
+## Post classifications and citations
+
+The model must classify every sent post alias. Up to **10%** may be left unclassified (`unclassified_by_model`). Invalid per-post rows (empty reason, overlong reason, or relevant with `asset_class: none`) are stored as **`classification_invalid`**; both invalid and unclassified counts apply toward that cap.
+
+Citation checks drop evidence tied to **`classification_invalid`** or **`unclassified_by_model`** posts and may drop an asset outlook when only those posts were cited. The handle still **fails** if an asset outlook names a class with **no model-relevant posts**, if a non-unclear outlook cites **no post IDs**, or if evidence is empty for reasons other than dropped invalid/unclassified citations. Overlong explanations are truncated (`explanationTruncated` in the report).

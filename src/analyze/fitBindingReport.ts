@@ -72,26 +72,26 @@ export function reportFitShape(input: {
   handle: string;
   question: string;
   referenceDate: string;
-  env?: NodeJS.ProcessEnv;
+  env: NodeJS.ProcessEnv;
 }): FitShapeReport {
-  const env = input.env ?? process.env;
   const planned = planAnalysisInput([...input.posts], input.handle);
   const fitted = fitAnalysisInputToContextWindow(planned, {
     question: input.question,
     referenceDate: input.referenceDate,
     postSource: "desearch",
+    env: input.env,
   });
   const aliases = postAliases(fitted.sent).map((item) => item.alias);
-  const maxTokens = classificationOutputTokenCeiling(fitted.sent.length, env);
+  const maxTokens = classificationOutputTokenCeiling(fitted.sent.length, input.env);
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
     PRICED_LLM_MODEL,
     maxTokens,
     aliases,
   );
-  const tokens = countRequestInputTokens(body, env);
+  const tokens = countRequestInputTokens(body, input.env);
   const outputJsonByteCeiling = classificationOutputJsonByteCeiling(fitted.sent.length);
-  const emptyThinkingTokens = emptyThinkingBlockTokenCeiling(env);
+  const emptyThinkingTokens = emptyThinkingBlockTokenCeiling(input.env);
   const outputTokenCeiling = outputJsonByteCeiling + emptyThinkingTokens;
   const bindingLimit = bindingForPlan(
     planned,

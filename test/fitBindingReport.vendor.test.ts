@@ -45,6 +45,7 @@ describe("fit binding report with vendor tokenizer", () => {
         handle: "analyst",
         question,
         referenceDate,
+        env: process.env,
       });
       assert.equal(report.postCount, count);
       assert.equal(report.postsSent, count);
@@ -59,6 +60,7 @@ describe("fit binding report with vendor tokenizer", () => {
         handle: "analyst",
         question,
         referenceDate,
+        env: process.env,
       });
       assert.equal(report.postCount, count);
       assert.equal(report.bindingLimit, "LLM_INPUT_MAX_CHARS");

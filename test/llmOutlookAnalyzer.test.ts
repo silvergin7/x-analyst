@@ -149,6 +149,9 @@ describe("LlmOutlookAnalyzer", () => {
       const analyzer = new LlmOutlookAnalyzer(
         loadLlmRuntimeConfig(env),
         recorded.transport,
+        undefined,
+        "fixtures",
+        { runEnv: env },
       );
       await assert.rejects(
         () => analyzer.analyzePerson("analyst", [
@@ -162,7 +165,7 @@ describe("LlmOutlookAnalyzer", () => {
 
   it("returns unclear with zero calls when nothing is eligible", async () => {
     const recorded = recordingTransport();
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, undefined, "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson("analyst", [
       post({ id: "r1", kind: "repost", text: "RT someone else" }),
       post({ id: "q1", kind: "quote", text: "Quoted headline" }),
@@ -197,7 +200,7 @@ describe("LlmOutlookAnalyzer", () => {
       explanation: "The commentary is cautious.",
       posts: [{ postId: "q1", relevant: true, asset_class: "macro", stance: "bearish" }],
     }))));
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), ok.transport);
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), ok.transport, undefined, "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.equal(ok.calls.length, 1);
     const body = JSON.parse(ok.calls[0]!.body) as {
@@ -206,7 +209,7 @@ describe("LlmOutlookAnalyzer", () => {
       response_format: { json_schema: { strict: boolean } };
     };
     const prompt = body.messages.map((message) => message.content).join("\n");
-    assert.equal(body.max_tokens, classificationOutputTokenCeiling(1));
+    assert.equal(body.max_tokens, classificationOutputTokenCeiling(1, process.env));
     assert.match(prompt, /\/no_think/);
     assert.match(prompt, /My own cautious comment/);
     assert.equal(prompt.includes("QUOTED TEXT SHOULD NOT APPEAR"), false);
@@ -233,7 +236,7 @@ describe("LlmOutlookAnalyzer", () => {
       }),
     ]) {
       const recorded = recordingTransport(completion(modelFor(posts, payload)));
-      const failing = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
+      const failing = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, undefined, "fixtures", { runEnv: process.env });
       await assert.rejects(
         () => failing.analyzePerson("analyst", posts, question, complete),
         (err: unknown) => err instanceof LlmCitationError,
@@ -246,8 +249,8 @@ describe("LlmOutlookAnalyzer", () => {
     const posts = [post({ id: "o1", kind: "original", text: "Staying constructive." })];
     const refusal = recordingTransport(completion("no", { refusal: "refused" }));
     const length = recordingTransport(completion("{", { finish_reason: "length" }));
-    const refusalAnalyzer = new LlmOutlookAnalyzer(liveConfig(), refusal.transport);
-    const lengthAnalyzer = new LlmOutlookAnalyzer(liveConfig(), length.transport);
+    const refusalAnalyzer = new LlmOutlookAnalyzer(liveConfig(), refusal.transport, undefined, "fixtures", { runEnv: process.env });
+    const lengthAnalyzer = new LlmOutlookAnalyzer(liveConfig(), length.transport, undefined, "fixtures", { runEnv: process.env });
     await assert.rejects(
       () => refusalAnalyzer.analyzePerson("analyst", posts, question, complete),
       (err: unknown) => err instanceof LlmCallError && err.code === "refusal",
@@ -266,15 +269,15 @@ describe("LlmOutlookAnalyzer", () => {
     const timeout = recordingTransport(undefined, Object.assign(new Error("timed out"), { name: "TimeoutError" }));
     const invalid = recordingTransport(completion("not-json"));
     await assert.rejects(
-      () => new LlmOutlookAnalyzer(liveConfig(), http.transport).analyzePerson("analyst", posts, question, complete),
+      () => new LlmOutlookAnalyzer(liveConfig(), http.transport, undefined, "fixtures", { runEnv: process.env }).analyzePerson("analyst", posts, question, complete),
       (err: unknown) => err instanceof LlmCallError && err.code === "http",
     );
     await assert.rejects(
-      () => new LlmOutlookAnalyzer(liveConfig(), timeout.transport).analyzePerson("analyst", posts, question, complete),
+      () => new LlmOutlookAnalyzer(liveConfig(), timeout.transport, undefined, "fixtures", { runEnv: process.env }).analyzePerson("analyst", posts, question, complete),
       (err: unknown) => err instanceof LlmCallError && err.code === "timeout",
     );
     await assert.rejects(
-      () => new LlmOutlookAnalyzer(liveConfig(), invalid.transport).analyzePerson("analyst", posts, question, complete),
+      () => new LlmOutlookAnalyzer(liveConfig(), invalid.transport, undefined, "fixtures", { runEnv: process.env }).analyzePerson("analyst", posts, question, complete),
       (err: unknown) => err instanceof LlmOutputError,
     );
     assert.equal(http.calls.length, 1);
@@ -293,7 +296,9 @@ describe("LlmOutlookAnalyzer", () => {
             { role: "user", content: "short" },
           ],
           recorded.transport,
+          process.env,
           40_000,
+          ["p1"],
         ),
       (err: unknown) => err instanceof LlmCallError && err.code === "context_window",
     );
@@ -323,6 +328,7 @@ describe("LlmOutlookAnalyzer", () => {
       question: question.text,
       referenceDate: "2026-10-10",
       postSource: "desearch",
+      env: process.env,
     });
     const dropped = fitted.records.filter(
       (record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON,
@@ -340,7 +346,7 @@ describe("LlmOutlookAnalyzer", () => {
       assert.equal(record.disposition, "excluded");
       assert.ok(record.timestamp < oldestSent.post.timestamp);
     }
-    const maxTokens = classificationOutputTokenCeiling(fitted.sent.length);
+    const maxTokens = classificationOutputTokenCeiling(fitted.sent.length, process.env);
     const estimate = estimateRequestBudget(
       buildChutesRequestBody(
         buildChatMessages(question.text, fitted.sent, "2026-10-10", "desearch"),
@@ -348,6 +354,7 @@ describe("LlmOutlookAnalyzer", () => {
         maxTokens,
         postAliases(fitted.sent).map((item) => item.alias),
       ),
+      process.env,
     );
     assert.equal(fitsModelContextWindow(estimate.inputTokensUpper, maxTokens), true);
     assert.ok(estimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
@@ -362,6 +369,7 @@ describe("LlmOutlookAnalyzer", () => {
       recorded.transport,
       "2026-10-10",
       "desearch",
+      { runEnv: process.env },
     );
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.equal(recorded.calls.length, 1);
@@ -397,7 +405,7 @@ describe("LlmOutlookAnalyzer", () => {
     const recorded = recordingTransport(
       completion(`${EMPTY_THINKING_BLOCK}${JSON.stringify(modelFor(posts, payload))}`),
     );
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, undefined, "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.equal(report.outlook, "unclear");
   });
@@ -409,7 +417,15 @@ describe("LlmOutlookAnalyzer", () => {
       { role: "user" as const, content: "x".repeat(600_000) },
     ];
     await assert.rejects(
-      () => requestChutesCompletion(liveConfig(), messages, recorded.transport),
+      () =>
+        requestChutesCompletion(
+          liveConfig(),
+          messages,
+          recorded.transport,
+          process.env,
+          800,
+          ["p1"],
+        ),
       (err: unknown) => err instanceof LlmCallError && err.code === "context_window",
     );
     assert.equal(recorded.calls.length, 0);
@@ -428,9 +444,10 @@ describe("LlmOutlookAnalyzer", () => {
       buildChutesRequestBody(
         buildChatMessages(question.text, modestPlan.sent, "2026-10-10", "desearch"),
         PRICED_LLM_MODEL,
-        classificationOutputTokenCeiling(modestPlan.sent.length),
+        classificationOutputTokenCeiling(modestPlan.sent.length, process.env),
         postAliases(modestPlan.sent).map((item) => item.alias),
       ),
+      process.env,
     );
     assert.equal(modestPlan.sent.length, 60);
     assert.ok(modestEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
@@ -449,9 +466,10 @@ describe("LlmOutlookAnalyzer", () => {
         buildChutesRequestBody(
           buildChatMessages(question.text, slicePlan.sent, "2026-10-10", "desearch"),
           PRICED_LLM_MODEL,
-          classificationOutputTokenCeiling(slicePlan.sent.length),
+          classificationOutputTokenCeiling(slicePlan.sent.length, process.env),
           postAliases(slicePlan.sent).map((item) => item.alias),
         ),
+        process.env,
       );
       assert.equal(slicePlan.sent.length, count);
       assert.equal(sliceEstimate.basis, "qwen3-tokenizer-conservative");
@@ -474,7 +492,8 @@ describe("LlmOutlookAnalyzer", () => {
           liveConfig(),
           buildChatMessages(question.text, tinyPlan.sent, "2026-10-10", "desearch"),
           recorded.transport,
-          classificationOutputTokenCeiling(tinyPlan.sent.length),
+          process.env,
+          classificationOutputTokenCeiling(tinyPlan.sent.length, process.env),
           postAliases(tinyPlan.sent).map((item) => item.alias),
         ),
       (err: unknown) => err instanceof LlmCallError && err.code === "budget",
@@ -484,7 +503,7 @@ describe("LlmOutlookAnalyzer", () => {
 
   it("rejects a question past the character bound with zero calls", async () => {
     const recorded = recordingTransport();
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, undefined, "fixtures", { runEnv: process.env });
     await assert.rejects(
       () => analyzer.analyzePerson(
         "analyst",
@@ -505,7 +524,7 @@ describe("LlmOutlookAnalyzer", () => {
       explanation: "Not enough to call a stance.",
       posts: [{ postId: "o1", relevant: false }],
     })), { usage: null }));
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport);
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, undefined, "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson(
       "analyst",
       onePost,
@@ -653,7 +672,7 @@ describe("LlmOutlookAnalyzer", () => {
         },
       ],
     }))));
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10", "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.deepEqual(
       report.evidence.map((item) => item.postId),
@@ -672,7 +691,7 @@ describe("LlmOutlookAnalyzer", () => {
       explanation: "Cited a post that was not sent.",
       posts: [{ postId: "repost-1", relevant: true, asset_class: "macro", stance: "bearish" }],
     }))));
-    const rejecting = new LlmOutlookAnalyzer(liveConfig(), rejected.transport, "2026-10-10");
+    const rejecting = new LlmOutlookAnalyzer(liveConfig(), rejected.transport, "2026-10-10", "fixtures", { runEnv: process.env });
     await assert.rejects(
       () => rejecting.analyzePerson("analyst", posts, question, complete),
       (err: unknown) => err instanceof LlmCitationError,
@@ -711,7 +730,7 @@ describe("LlmOutlookAnalyzer", () => {
         },
       ],
     }))));
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10", "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson("analyst", posts, question, {
       retrievalComplete: true,
       fetchStopReason: "lookback_window_reached",
@@ -757,7 +776,7 @@ describe("LlmOutlookAnalyzer", () => {
       explanation: "The post is not about markets.",
       posts: [{ postId: "m1", relevant: false }],
     }))));
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10");
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-10-10", "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson(
       "analyst",
       mediaPosts,
@@ -784,7 +803,7 @@ describe("LlmOutlookAnalyzer", () => {
       explanation: "The fixture text does not support a stance.",
       posts: [{ postId: "o1", relevant: false }],
     }))));
-    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-09-22");
+    const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, "2026-09-22", "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson(
       "analyst",
       rulePosts,
@@ -880,7 +899,7 @@ describe("runLlmFixtureCheck", () => {
       messages: { content: string }[];
     };
     assert.equal(body.model, PRICED_LLM_MODEL);
-    assert.equal(body.max_tokens, classificationOutputTokenCeiling(2));
+    assert.equal(body.max_tokens, classificationOutputTokenCeiling(2, process.env));
     assert.equal(body.temperature, 0.7);
     assert.equal(body.top_p, 0.8);
     assert.equal(body.top_k, 20);

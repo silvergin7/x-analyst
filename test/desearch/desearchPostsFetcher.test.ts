@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { formatFetchIssue } from "../../src/format/report.js";
-import { DesearchPaginationError } from "../../src/fetch/desearch/fetchHandlePages.js";
 import {
   DesearchNotConfiguredError,
   DesearchPostsFetcher,
 } from "../../src/fetch/desearch/desearchPostsFetcher.js";
-import type { DesearchTransport } from "../../src/fetch/desearch/desearchTransport.js";
+import {
+  DesearchRetrievalError,
+  type DesearchTransport,
+} from "../../src/fetch/desearch/desearchTransport.js";
 
 const FAKE_CREDENTIAL = "unit-test-only-not-a-secret";
 
@@ -68,15 +70,15 @@ describe("DesearchPostsFetcher", () => {
       credential: FAKE_CREDENTIAL,
       maxRequestsPerRun: 1,
     });
-    await assert.rejects(
-      () =>
-        failing.fetchForHandles(
-          ["bullmacro"],
-          { maxPostsPerPerson: 10, maxPostsTotal: 10 },
-          { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
-        ),
-      /duplicate post id 2104906619062538582 has different content/,
+    const failed = await failing.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
     );
+    assert.equal(failed[0]?.status, "retrieval_failed");
+    if (failed[0]?.status === "retrieval_failed") {
+      assert.match(failed[0].reason, /duplicate post id 2104906619062538582 has different content/);
+    }
   });
 
   it("removes a post id repeated on a later page", async () => {
@@ -132,6 +134,66 @@ describe("DesearchPostsFetcher", () => {
         [id, "older"],
       );
       assert.equal(outcomes[0].posts[0]?.text, "First copy of the repeated post.");
+    }
+  });
+
+  it("marks a page with only invalid items as incomplete", async () => {
+    const transport: DesearchTransport = {
+      async execute() {
+        return {
+          status: 200,
+          body: tweetsBody([
+            validApiTweet("bad", "othermacro"),
+            { id: "incomplete" },
+          ]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 1,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.equal(outcomes[0]?.status, "incomplete");
+    if (outcomes[0]?.status === "incomplete") {
+      assert.equal(outcomes[0].reason, "desearch_page_no_valid_posts");
+    }
+  });
+
+  it("reports invalidPostsSkipped on an otherwise ok handle", async () => {
+    const transport: DesearchTransport = {
+      async execute() {
+        return {
+          status: 200,
+          body: tweetsBody([
+            validApiTweet("good", "bullmacro"),
+            validApiTweet("bad", "othermacro"),
+          ]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 1,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+      { lookbackCutoffMs: Date.parse("2026-09-10T00:00:00.000Z") },
+    );
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].invalidPostsSkipped?.author_mismatch, 1);
     }
   });
 
@@ -487,14 +549,14 @@ describe("DesearchPostsFetcher", () => {
       maxRequestsPerRun: 5,
     });
 
-    await assert.rejects(
-      () =>
-        fetcher.fetchForHandles(["bullmacro"], {
-          maxPostsPerPerson: 10,
-          maxPostsTotal: 10,
-        }),
-      DesearchPaginationError,
-    );
+    const outcomes = await fetcher.fetchForHandles(["bullmacro"], {
+      maxPostsPerPerson: 10,
+      maxPostsTotal: 10,
+    });
+    assert.equal(outcomes[0]?.status, "retrieval_failed");
+    if (outcomes[0]?.status === "retrieval_failed") {
+      assert.match(outcomes[0].reason, /repeated cursor/);
+    }
   });
 
   it("returns empty for valid empty tweets list without cursor", async () => {
@@ -515,6 +577,205 @@ describe("DesearchPostsFetcher", () => {
       maxPostsTotal: 10,
     });
     assert.equal(outcomes[0]?.status, "empty");
+  });
+
+  it("isolates HTTP 404 on the second of three handles", async () => {
+    const transport: DesearchTransport = {
+      async execute(request) {
+        const username = new URL(request.url).searchParams.get("username");
+        if (username === "bearmacro") {
+          return { status: 404, body: { error: "not found" } };
+        }
+        return {
+          status: 200,
+          body: tweetsBody([validApiTweet("1", username ?? "x")]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 9,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro", "bearmacro", "thirdmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 30 },
+    );
+    assert.equal(outcomes.length, 3);
+    assert.equal(outcomes[0]?.status, "ok");
+    assert.equal(outcomes[1]?.status, "retrieval_failed");
+    if (outcomes[1]?.status === "retrieval_failed") {
+      assert.equal(outcomes[1].httpStatus, 404);
+    }
+    assert.equal(outcomes[2]?.status, "ok");
+  });
+
+  it("keeps partial posts when page two times out", async () => {
+    let call = 0;
+    const transport: DesearchTransport = {
+      async execute() {
+        call += 1;
+        if (call === 1) {
+          return {
+            status: 200,
+            body: tweetsBody(
+              [validApiTweet("p1", "bullmacro", "2026-10-09T00:00:00.000Z")],
+              "page-2",
+            ),
+          };
+        }
+        throw new DesearchRetrievalError("Desearch request timed out.", {
+          category: "timeout",
+          billing: [],
+        });
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 3,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+    );
+    assert.equal(call, 2);
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].posts.length, 1);
+      assert.equal(outcomes[0].incompleteReason, "desearch_retrieval_interrupted");
+      assert.equal(outcomes[0].retrievalComplete, false);
+      assert.equal(outcomes[0].failureCategory, "timeout");
+      assert.equal(outcomes[0].reason, "Desearch request timed out.");
+    }
+  });
+
+  it("records page-one billing once when page two fails with a non-Desearch error", async () => {
+    const pageOneBilling = {
+      costUsd: 0.00045,
+      usageCount: 3,
+      service: "desearch",
+      currency: "USD",
+    };
+    let call = 0;
+    const transport: DesearchTransport = {
+      async execute() {
+        call += 1;
+        if (call === 1) {
+          return {
+            status: 200,
+            body: tweetsBody(
+              [validApiTweet("p1", "bullmacro", "2026-10-09T00:00:00.000Z")],
+              "page-2",
+            ),
+            billing: pageOneBilling,
+          };
+        }
+        throw new TypeError("socket reset");
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 3,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+    );
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.deepEqual(outcomes[0].billing, [pageOneBilling]);
+    }
+  });
+
+  it("keeps page-one posts when page two is all invalid items", async () => {
+    let page = 0;
+    const transport: DesearchTransport = {
+      async execute() {
+        page += 1;
+        if (page === 1) {
+          return {
+            status: 200,
+            body: tweetsBody(
+              [validApiTweet("keep", "bullmacro", "2026-10-09T00:00:00.000Z")],
+              "page-2",
+            ),
+          };
+        }
+        return {
+          status: 200,
+          body: tweetsBody([validApiTweet("bad", "othermacro"), { id: "incomplete" }]),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 3,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["bullmacro"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 10 },
+    );
+    assert.equal(outcomes[0]?.status, "ok");
+    if (outcomes[0]?.status === "ok") {
+      assert.equal(outcomes[0].posts.length, 1);
+      assert.equal(outcomes[0].incompleteReason, "desearch_page_no_valid_posts");
+      assert.equal(outcomes[0].retrievalComplete, false);
+    }
+  });
+
+  it("counts failed network attempts against run and per-handle limits", async () => {
+    let attempts = 0;
+    const transport: DesearchTransport = {
+      async execute(request) {
+        attempts += 1;
+        const username = new URL(request.url).searchParams.get("username");
+        if (username === "alpha") {
+          throw new DesearchRetrievalError("network down", {
+            category: "network",
+            billing: [],
+          });
+        }
+        const handle = username ?? "x";
+        const n = attempts;
+        return {
+          status: 200,
+          body: tweetsBody(
+            [validApiTweet(`${handle}-${n}`, handle, "2026-10-09T00:00:00.000Z")],
+            `more-${handle}`,
+          ),
+        };
+      },
+    };
+    const fetcher = new DesearchPostsFetcher({
+      transport,
+      requireLiveEligible: false,
+      settings: { hasUsableCredential: true, liveEligible: true },
+      credential: FAKE_CREDENTIAL,
+      maxRequestsPerRun: 5,
+      maxRequestsPerHandle: 3,
+    });
+    const outcomes = await fetcher.fetchForHandles(
+      ["alpha", "beta", "gamma"],
+      { maxPostsPerPerson: 10, maxPostsTotal: 30 },
+    );
+    assert.equal(attempts, 5);
+    assert.equal(outcomes[0]?.status, "retrieval_failed");
+    assert.equal(outcomes[1]?.status, "ok");
+    assert.equal(outcomes[2]?.status, "ok");
+    if (outcomes[1]?.status === "ok") {
+      assert.equal(outcomes[1].posts.length, 2);
+    }
   });
 
   it("stops each of three handles at the lower of the per-handle cap and the remaining run budget", async () => {

@@ -3,6 +3,7 @@ import { parseCliArgs } from "./cliArgs.js";
 import { utcReferenceDate } from "./config/llmSettings.js";
 import { formatBudgetEstimate } from "./format/llmFixtureReport.js";
 import { formatFetchIssue, formatFullReport, formatReportFailure } from "./format/report.js";
+import { fetchOutcomesFailExit } from "./runtime/fetchExitCode.js";
 import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 
 async function main(): Promise<void> {
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
       result.handleFailures,
     );
     process.stdout.write(output);
-    if (result.handleFailures.length > 0) {
+    if (result.handleFailures.length > 0 || fetchOutcomesFailExit(result.fetchOutcomes)) {
       process.exitCode = 1;
     }
   } catch (err) {

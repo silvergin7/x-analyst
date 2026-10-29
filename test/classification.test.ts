@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { planAnalysisInput } from "../src/analyze/analysisInput.js";
 import {
+  CLASSIFICATION_INVALID_REASON,
   checkClassifications,
   parseModelOutlook,
   resolveAliasClassifications,
@@ -51,8 +52,8 @@ const marketPosts = [
   }),
 ];
 
-function checked(payload: ReturnType<typeof classifiedOutlook>) {
-  const plan = planAnalysisInput(marketPosts, "analyst");
+function checked(payload: ReturnType<typeof classifiedOutlook>, posts: Post[] = marketPosts) {
+  const plan = planAnalysisInput(posts, "analyst");
   const aliases = postAliases(plan.sent);
   const parsed = parseModelOutlook(
     JSON.stringify(aliasModel(plan.sent, payload)),
@@ -63,6 +64,25 @@ function checked(payload: ReturnType<typeof classifiedOutlook>) {
     resolveAliasClassifications(aliases, parsed),
     "2026-10-10",
   );
+}
+
+function fillerPosts(count: number): Post[] {
+  return Array.from({ length: count }, (_, index) =>
+    post({
+      id: `fill-${index}`,
+      kind: "original",
+      text: `Macro filler post ${index}.`,
+      timestamp: `2026-10-0${(index % 8) + 1}T12:00:00.000Z`,
+    }),
+  );
+}
+
+function allIrrelevantPosts(posts: Post[]) {
+  return posts.map((item) => ({
+    postId: item.id,
+    relevant: false,
+    reason: "Not about markets.",
+  }));
 }
 
 describe("post classification", () => {
@@ -119,7 +139,7 @@ describe("post classification", () => {
     );
   });
 
-  it("rejects a reason longer than 120 characters and still accepts 120", () => {
+  it("marks a long reason as classification_invalid and still accepts 120", () => {
     const reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS);
     const accepted = classifiedOutlook({
       outlook: "unclear",
@@ -146,12 +166,38 @@ describe("post classification", () => {
         "2026-10-10",
       ),
     );
-    acceptedModel.posts[aliases[0]!.alias]!.reason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 1);
-    assert.throws(
-      () => parseModelOutlook(JSON.stringify(acceptedModel), aliasNames),
-      (err: unknown) =>
-        err instanceof LlmOutputError && /reason exceeded the character bound/.test(err.message),
+    const longPosts = [...fillerPosts(6), ...marketPosts];
+    const longPlan = planAnalysisInput(longPosts, "analyst");
+    const longAliases = postAliases(longPlan.sent);
+    const longNames = longAliases.map((item) => item.alias);
+    const longModel = aliasModel(
+      longPlan.sent,
+      classifiedOutlook({
+        outlook: "unclear",
+        explanation: "Mostly filler.",
+        posts: [
+          ...allIrrelevantPosts(fillerPosts(6)),
+          { postId: "noise", relevant: false },
+          {
+            postId: "crypto-a",
+            relevant: true,
+            asset_class: "crypto",
+            stance: "bullish",
+            reason: "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 1),
+          },
+          { postId: "crypto-b", relevant: false },
+          { postId: "rates-old", relevant: false },
+        ],
+      }),
     );
+    const resolvedLong = resolveAliasClassifications(
+      longAliases,
+      parseModelOutlook(JSON.stringify(longModel), longNames),
+    );
+    const invalidLong = resolvedLong.posts.find(
+      (item) => item.postId === "crypto-a",
+    );
+    assert.equal(invalidLong?.reason, CLASSIFICATION_INVALID_REASON);
     const tooManyWords = aliasModel(plan.sent, classifiedOutlook({
       outlook: "unclear",
       explanation: "Too many words in one reason.",
@@ -164,10 +210,168 @@ describe("post classification", () => {
     }));
     const longReason = tooManyWords.posts[aliases[0]!.alias]!.reason;
     assert.ok(longReason.length <= CLASSIFICATION_REASON_MAX_CHARS);
-    assert.throws(
-      () => parseModelOutlook(JSON.stringify(tooManyWords), aliasNames),
-      (err: unknown) => err instanceof LlmOutputError && /exceeded 20 words/.test(err.message),
+    const wordPosts = [...fillerPosts(6), ...marketPosts];
+    const wordPlan = planAnalysisInput(wordPosts, "analyst");
+    const wordAliases = postAliases(wordPlan.sent);
+    const wordNames = wordAliases.map((item) => item.alias);
+    const wordModel = aliasModel(
+      wordPlan.sent,
+      classifiedOutlook({
+        outlook: "unclear",
+        explanation: "Mostly filler.",
+        posts: [
+          ...allIrrelevantPosts(fillerPosts(6)),
+          {
+            postId: "noise",
+            relevant: false,
+            reason: "word ".repeat(21).trim(),
+          },
+          { postId: "crypto-a", relevant: false },
+          { postId: "crypto-b", relevant: false },
+          { postId: "rates-old", relevant: false },
+        ],
+      }),
     );
+    const resolvedWords = resolveAliasClassifications(
+      wordAliases,
+      parseModelOutlook(JSON.stringify(wordModel), wordNames),
+    );
+    const invalidWords = resolvedWords.posts.find((item) => item.postId === "noise");
+    assert.equal(invalidWords?.reason, CLASSIFICATION_INVALID_REASON);
+  });
+
+  it("drops an asset outlook when its only cited post has a long reason", () => {
+    const posts = [...fillerPosts(6), ...marketPosts];
+    const longReason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 5);
+    const result = checked(
+      classifiedOutlook({
+        outlook: "unclear",
+        explanation: "Only cited crypto post was invalid.",
+        posts: [
+          ...allIrrelevantPosts(fillerPosts(6)),
+          { postId: "noise", relevant: false },
+          {
+            postId: "crypto-a",
+            relevant: true,
+            asset_class: "crypto",
+            stance: "bullish",
+            reason: longReason,
+          },
+          {
+            postId: "crypto-b",
+            relevant: true,
+            asset_class: "crypto",
+            stance: "bearish",
+            reason: "Valid second crypto view.",
+          },
+          { postId: "rates-old", relevant: false },
+        ],
+        assetOutlooks: [
+          { asset_class: "crypto", outlook: "bullish", evidencePostIds: ["crypto-a"] },
+        ],
+      }),
+      posts,
+    );
+    assert.equal(result.assetOutlooks.length, 0);
+    assert.deepEqual(result.assetOutlooksDropped, ["crypto"]);
+    assert.equal(result.evidenceDroppedUnclassified, 1);
+    assert.throws(
+      () =>
+        checked(
+          classifiedOutlook({
+            outlook: "bullish",
+            explanation: "Needs at least one eligible post.",
+            posts: [
+              ...allIrrelevantPosts(fillerPosts(6)),
+              {
+                postId: "crypto-a",
+                relevant: true,
+                asset_class: "crypto",
+                stance: "bullish",
+                reason: longReason,
+              },
+              { postId: "crypto-b", relevant: false },
+              { postId: "rates-old", relevant: false },
+              { postId: "noise", relevant: false },
+            ],
+            assetOutlooks: [
+              { asset_class: "crypto", outlook: "bullish", evidencePostIds: ["crypto-a"] },
+            ],
+          }),
+          posts,
+        ),
+      (err: unknown) =>
+        err instanceof LlmCitationError &&
+        /A stated outlook requires at least one relevant post/.test(err.message),
+    );
+  });
+
+  it("keeps an asset outlook when one of two cited posts has a long reason", () => {
+    const posts = [...fillerPosts(6), ...marketPosts];
+    const longReason = "x".repeat(CLASSIFICATION_REASON_MAX_CHARS + 3);
+    const result = checked(
+      classifiedOutlook({
+        outlook: "mixed",
+        explanation: "One crypto post still supports the view.",
+        posts: [
+          ...allIrrelevantPosts(fillerPosts(6)),
+          { postId: "noise", relevant: false },
+          {
+            postId: "crypto-a",
+            relevant: true,
+            asset_class: "crypto",
+            stance: "bullish",
+            reason: longReason,
+          },
+          {
+            postId: "crypto-b",
+            relevant: true,
+            asset_class: "crypto",
+            stance: "bearish",
+            reason: "Still cautious on the spike.",
+          },
+          { postId: "rates-old", relevant: false },
+        ],
+        assetOutlooks: [
+          {
+            asset_class: "crypto",
+            outlook: "mixed",
+            evidencePostIds: ["crypto-a", "crypto-b"],
+          },
+        ],
+      }),
+      posts,
+    );
+    assert.equal(result.assetOutlooks.length, 1);
+    assert.equal(result.assetOutlooks[0]?.evidence.length, 1);
+    assert.equal(result.evidenceDroppedUnclassified, 1);
+  });
+
+  it("truncates an overlong explanation instead of failing the handle", () => {
+    const plan = planAnalysisInput(marketPosts, "analyst");
+    const aliases = postAliases(plan.sent);
+    const names = aliases.map((item) => item.alias);
+    const parsed = parseModelOutlook(
+      JSON.stringify({
+        outlook: "unclear",
+        explanation: "e".repeat(1600),
+        posts: Object.fromEntries(
+          aliases.map((item) => [
+            item.alias,
+            {
+              relevant: false,
+              asset_class: "none",
+              stance: "unclear",
+              reason: "Not market related.",
+            },
+          ]),
+        ),
+        assetOutlooks: [],
+      }),
+      names,
+    );
+    assert.equal(parsed.explanation.length, 1500);
+    assert.equal(parsed.explanationTruncated, true);
   });
 
   it("fails when a post id is cited in two asset outlooks", () => {
@@ -194,6 +398,51 @@ describe("post classification", () => {
       (err: unknown) =>
         err instanceof LlmCitationError &&
         /Post id crypto-a was cited in more than one asset outlook/.test(err.message),
+    );
+  });
+
+  it("fails when an asset outlook names a class with no model-relevant posts", () => {
+    assert.throws(
+      () =>
+        checked(classifiedOutlook({
+          outlook: "mixed",
+          explanation: "Rates outlook without any relevant rates posts.",
+          posts: [
+            { postId: "noise", relevant: false },
+            { postId: "crypto-a", relevant: true, asset_class: "crypto", stance: "bullish" },
+            { postId: "crypto-b", relevant: true, asset_class: "crypto", stance: "bearish" },
+            { postId: "rates-old", relevant: false },
+          ],
+          assetOutlooks: [
+            { asset_class: "crypto", outlook: "mixed", evidencePostIds: ["crypto-a"] },
+            { asset_class: "rates_bonds", outlook: "cautious", evidencePostIds: ["rates-old"] },
+          ],
+        })),
+      (err: unknown) =>
+        err instanceof LlmCitationError &&
+        /Asset class rates_bonds has no relevant posts in the model classifications/.test(err.message),
+    );
+  });
+
+  it("fails when a non-unclear asset outlook cites no posts", () => {
+    assert.throws(
+      () =>
+        checked(classifiedOutlook({
+          outlook: "mixed",
+          explanation: "Crypto bullish but evidence list empty.",
+          posts: [
+            { postId: "noise", relevant: false },
+            { postId: "crypto-a", relevant: true, asset_class: "crypto", stance: "bullish" },
+            { postId: "crypto-b", relevant: true, asset_class: "crypto", stance: "bearish" },
+            { postId: "rates-old", relevant: false },
+          ],
+          assetOutlooks: [
+            { asset_class: "crypto", outlook: "bullish", evidencePostIds: [] },
+          ],
+        })),
+      (err: unknown) =>
+        err instanceof LlmCitationError &&
+        /Asset class crypto cited no posts for a non-unclear outlook/.test(err.message),
     );
   });
 

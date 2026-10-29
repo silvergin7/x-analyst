@@ -1,4 +1,7 @@
-import { UNCLASSIFIED_BY_MODEL_REASON } from "../analyze/classification.js";
+import {
+  CLASSIFICATION_INVALID_REASON,
+  UNCLASSIFIED_BY_MODEL_REASON,
+} from "../analyze/classification.js";
 import { desearchListPriceUsd } from "../config/desearchSettings.js";
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
 import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.js";
@@ -21,7 +24,17 @@ const INCOMPLETE_REASON_LABEL: Record<string, string> = {
     "run Desearch HTTP request limit reached before full pagination (not a dollar cap)",
   desearch_handle_request_limit_reached:
     "per-handle Desearch HTTP request limit reached before full pagination (not a dollar cap)",
+  desearch_page_no_valid_posts:
+    "a Desearch page returned items but none could be mapped to valid posts",
+  desearch_retrieval_interrupted:
+    "Desearch retrieval stopped after a failed request; outlook uses partial posts only",
 };
+
+function formatSkipCounts(skipped: Record<string, number>): string {
+  return Object.entries(skipped)
+    .map(([code, count]) => `${code}: ${count}`)
+    .join(", ");
+}
 
 export function formatFetchIssue(
   outcome: FetchOutcome,
@@ -43,6 +56,14 @@ export function formatFetchIssue(
         `  [!] Incomplete retrieval for "@${outcome.handle}": ${outcome.reason} — ` +
         "analyst was not examined (no outlook inferred)"
       );
+    case "retrieval_failed": {
+      const status =
+        outcome.httpStatus !== undefined ? ` HTTP ${outcome.httpStatus}` : "";
+      return (
+        `  [!] Desearch retrieval failed for "@${outcome.handle}" ` +
+        `(${outcome.failureCategory}${status}): ${outcome.reason}`
+      );
+    }
     case "ok": {
       const stop = outcome.fetchStopReason
         ? `Fetch stopped: ${FETCH_STOP_LABEL[outcome.fetchStopReason]}`
@@ -51,9 +72,15 @@ export function formatFetchIssue(
         const label =
           INCOMPLETE_REASON_LABEL[outcome.incompleteReason] ??
           outcome.incompleteReason;
+        const halt =
+          outcome.failureCategory !== undefined
+            ? ` — ${outcome.failureCategory}${
+                outcome.httpStatus !== undefined ? ` HTTP ${outcome.httpStatus}` : ""
+              }${outcome.reason !== undefined ? `: ${outcome.reason}` : ""}`
+            : "";
         const partial =
           `  [~] Partial retrieval for "@${outcome.handle}": ${label} ` +
-          `(${outcome.posts.length} post(s) retrieved)`;
+          `(${outcome.posts.length} post(s) retrieved)${halt}`;
         return stop === "" ? partial : `${partial}\n  ${stop}`;
       }
       if (stop !== "") {
@@ -97,6 +124,23 @@ export function formatPersonReport(report: PersonOutlookReport): string {
       `  Unclassified by model: ${unclassified.map((item) => item.postId).join(", ")}`,
     );
   }
+  const invalid = report.classifications?.filter(
+    (item) => item.reason === CLASSIFICATION_INVALID_REASON,
+  ) ?? [];
+  if (invalid.length > 0) {
+    lines.push(`  Classification invalid: ${invalid.map((item) => item.postId).join(", ")}`);
+  }
+  if (report.explanationTruncated) {
+    lines.push("  Explanation was truncated to the configured length limit.");
+  }
+  if (report.evidenceDroppedUnclassified !== undefined && report.evidenceDroppedUnclassified > 0) {
+    lines.push(
+      `  Evidence citations dropped (unclassified or invalid): ${report.evidenceDroppedUnclassified}`,
+    );
+  }
+  if (report.assetOutlooksDropped !== undefined && report.assetOutlooksDropped.length > 0) {
+    lines.push(`  Asset outlooks dropped: ${report.assetOutlooksDropped.join(", ")}`);
+  }
   if (report.viewMayBeStale && !report.assetOutlooks?.some((item) => item.viewMayBeStale)) {
     lines.push(
       `  The newest relevant post is older than ${STALE_RELEVANT_POST_DAYS} days. The view may be stale.`,
@@ -104,6 +148,9 @@ export function formatPersonReport(report: PersonOutlookReport): string {
   }
   if (report.duplicatePostsRemoved !== undefined && report.duplicatePostsRemoved > 0) {
     lines.push(`  Duplicate post ids removed: ${report.duplicatePostsRemoved}`);
+  }
+  if (report.invalidPostsSkipped !== undefined && Object.keys(report.invalidPostsSkipped).length > 0) {
+    lines.push(`  Invalid posts skipped: ${formatSkipCounts(report.invalidPostsSkipped)}`);
   }
   if (report.postsWithMedia !== undefined) {
     lines.push(`  Posts with media: ${report.postsWithMedia}`);

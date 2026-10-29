@@ -3,7 +3,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseCliArgs } from "./cliArgs.js";
 import { AnalystListError, analystHandlesFromList, loadAnalystList } from "./config/analystList.js";
-import { loadLlmRuntimeConfig, utcReferenceDate } from "./config/llmSettings.js";
+import {
+  loadLlmRuntimeConfig,
+  readInputMaxCharsStrict,
+  utcReferenceDate,
+} from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
 import { printAnalyzePreflight } from "./analyzePreflight.js";
 import { liveTokenizerPreflightMessage } from "./analyze/qwenTokenizerPins.js";
@@ -16,6 +20,7 @@ import { confirmProceed } from "./runtime/confirmationGate.js";
 import { EnvFileError, loadEnvFileIntoProcess } from "./runtime/loadEnvFile.js";
 import { liveFetchEnvLooksDisabled, offlineProviderEnv } from "./runtime/offlineProviderEnv.js";
 import { chutesLiveEnvLooksDisabled, stripDesearchForReplayRun } from "./runtime/replayRunEnv.js";
+import { fetchOutcomesFailExit } from "./runtime/fetchExitCode.js";
 import { validateProviderOverrides } from "./runtime/providerUrlPreflight.js";
 
 const ENV_FILE = ".env";
@@ -54,7 +59,19 @@ async function main(): Promise<void> {
   }
 
   let runEnv: NodeJS.ProcessEnv = { ...process.env };
-  if (!options.offline) {
+  if (options.offline) {
+    if (options.envFilePath !== undefined) {
+      try {
+        loadEnvFileIntoProcess(options.envFilePath, runEnv);
+      } catch (err) {
+        const message = err instanceof EnvFileError ? err.message : "Could not load env file";
+        process.stderr.write(`${message}\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    runEnv = offlineProviderEnv(runEnv);
+  } else {
     try {
       loadEnvFileIntoProcess(options.envFilePath ?? ENV_FILE, runEnv);
     } catch (err) {
@@ -82,8 +99,6 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-  } else {
-    runEnv = offlineProviderEnv(runEnv);
   }
 
   let handles = options.handles;
@@ -134,6 +149,13 @@ async function main(): Promise<void> {
         return;
       }
     }
+  }
+
+  const inputMaxChars = readInputMaxCharsStrict(runEnv);
+  if (!inputMaxChars.ok) {
+    process.stderr.write(`Preflight error: ${inputMaxChars.message}\n`);
+    process.exitCode = 1;
+    return;
   }
 
   printAnalyzePreflight({
@@ -208,7 +230,7 @@ async function main(): Promise<void> {
     );
     process.stdout.write(`Report JSON: ${reportPath}\n`);
 
-    if (result.handleFailures.length > 0) {
+    if (result.handleFailures.length > 0 || fetchOutcomesFailExit(result.fetchOutcomes)) {
       process.exitCode = 1;
     }
   } catch (err) {

@@ -17,6 +17,7 @@ import {
   loadInputMaxChars,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
+  readInputMaxCharsStrict,
 } from "./config/llmSettings.js";
 import { lookbackCutoffMs } from "./config/timeWindow.js";
 import { loadPostsProviderConfig } from "./config/postsProvider.js";
@@ -196,6 +197,11 @@ export async function runReport(
   }
   if (problems.length > 0) {
     throw new ReportConfigError(`${problems.join(" ")} No request was sent.`);
+  }
+
+  const inputMaxCharsStrict = readInputMaxCharsStrict(env);
+  if (!inputMaxCharsStrict.ok) {
+    throw new ReportConfigError(`${inputMaxCharsStrict.message}. No request was sent.`);
   }
 
   let postsSource: PostSource =
@@ -380,7 +386,7 @@ export async function runReport(
             options.chutesTransport ?? createFetchChutesTransport(),
             referenceDate,
             postsSource,
-            options.onEstimate,
+            { runEnv: env, onEstimate: options.onEstimate },
           )
         : new MockOutlookAnalyzer();
     const reports: PersonOutlookReport[] = [];
@@ -395,6 +401,7 @@ export async function runReport(
           lookbackCutoffMs: postsSource === "desearch" ? cutoffMs : undefined,
           inputMaxChars,
           duplicatePostsRemoved: outcome.duplicatePostsRemoved,
+          invalidPostsSkipped: outcome.invalidPostsSkipped,
         });
         reports.push(report);
       } catch (err) {

@@ -33,6 +33,7 @@ function chutesEstimateForPosts(input: {
     question: input.question,
     referenceDate: input.referenceDate,
     postSource: "desearch",
+    env: input.env,
   });
   const aliases = postAliases(fitted.sent).map((item) => item.alias);
   const body = buildChutesRequestBody(

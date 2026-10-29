@@ -40,7 +40,9 @@ export type FetchIncompleteReason =
   | "total_post_limit_reached"
   | "per_person_limit_reached"
   | "desearch_request_budget_exhausted"
-  | "desearch_handle_request_limit_reached";
+  | "desearch_handle_request_limit_reached"
+  | "desearch_page_no_valid_posts"
+  | "desearch_retrieval_interrupted";
 
 /**
  * Why Desearch stopped requesting another page for one handle.
@@ -55,6 +57,13 @@ export type FetchStopReason =
 export type PostSource = "fixtures" | "desearch";
 
 export type AnalysisProviderLabel = "mock-rules" | "chutes";
+
+export type DesearchFailureCategory =
+  | "http_status"
+  | "timeout"
+  | "network"
+  | "invalid_json"
+  | "parse";
 
 /** Billing fields Desearch actually returned. Missing fields stay missing. */
 export interface DesearchBilling {
@@ -75,18 +84,28 @@ type FetchOutcomeShape =
       fetchStopReason?: FetchStopReason;
       /** Copies of a post id dropped because a later page repeated it. */
       duplicatePostsRemoved?: number;
+      /** Invalid items skipped inside Desearch responses, by reason code. */
+      invalidPostsSkipped?: Record<string, number>;
+      /** Present when retrieval stopped on an error but partial posts were kept. */
+      failureCategory?: DesearchFailureCategory;
+      httpStatus?: number;
+      reason?: string;
     }
   | {
       status: "incomplete";
       handle: string;
-      reason:
-        | "total_post_limit_reached"
-        | "desearch_request_budget_exhausted"
-        | "desearch_handle_request_limit_reached";
+      reason: FetchIncompleteReason;
     }
   | { status: "unknown_handle"; handle: string }
   | { status: "invalid_handle"; handle: string; reason: string }
-  | { status: "empty"; handle: string };
+  | { status: "empty"; handle: string }
+  | {
+      status: "retrieval_failed";
+      handle: string;
+      failureCategory: DesearchFailureCategory;
+      httpStatus?: number;
+      reason: string;
+    };
 
 export type FetchOutcome = FetchOutcomeShape & {
   billing?: DesearchBilling[];
@@ -143,6 +162,7 @@ export interface RetrievalContext {
   /** Total characters of eligible post text that may be sent. */
   inputMaxChars?: number;
   duplicatePostsRemoved?: number;
+  invalidPostsSkipped?: Record<string, number>;
 }
 
 export interface PersonOutlookReport {
@@ -188,8 +208,16 @@ export interface PersonOutlookReport {
   assetOutlooks?: AssetClassOutlook[];
   /** Repeated post ids dropped across Desearch pages. */
   duplicatePostsRemoved?: number;
+  /** Invalid Desearch items skipped during retrieval, by reason code. */
+  invalidPostsSkipped?: Record<string, number>;
   /** Retrieved posts whose documented media array was non-empty. */
   postsWithMedia?: number;
+  /** Model explanation was cut to the configured character limit. */
+  explanationTruncated?: boolean;
+  /** Evidence citations dropped because the post was unclassified or invalid. */
+  evidenceDroppedUnclassified?: number;
+  /** Asset-class outlooks removed after citation checks. */
+  assetOutlooksDropped?: Exclude<AssetClass, "none">[];
 }
 
 /** One retrieved post as included, truncated, or left out of model input. */

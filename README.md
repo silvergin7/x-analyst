@@ -127,7 +127,7 @@ npm run typecheck
 
 Tests force live providers off. A few tests need the vendor tokenizer tree and skip visibly when `vendor/qwen3-32b-fp8/` is missing.
 
-Pull requests and pushes to `main` run `npm test` and `npm run typecheck` on GitHub Actions with live providers forced off. The tokenizer files aren't downloaded there, so the tokenizer tests show as skipped.
+Pull requests and pushes to `main` run `npm test` and `npm run typecheck` on GitHub Actions with live providers forced off. The tokenizer files aren't downloaded there, so tests that need them show as skipped.
 
 ## More detail
 

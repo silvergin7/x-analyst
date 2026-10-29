@@ -45,6 +45,7 @@ describe("preflight post shapes", () => {
         question: "What is the outlook?",
         referenceDate: "2026-10-10",
         postSource: "desearch",
+        env,
       },
     );
     assert.equal(fitted.sent.length, 60);

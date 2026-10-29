@@ -1,13 +1,22 @@
 import { comparePostTime } from "../../analyze/analysisInput.js";
 import { dedupePostsById } from "../dedupePosts.js";
-import type { DesearchBilling, FetchStopReason, Post } from "../../types.js";
+import type {
+  DesearchBilling,
+  DesearchFailureCategory,
+  FetchIncompleteReason,
+  FetchStopReason,
+  Post,
+} from "../../types.js";
 import { buildTwitterUserPostsRequest } from "./buildRequest.js";
 import {
   DesearchRetrievalError,
   desearchErrorMessage,
   type DesearchTransport,
 } from "./desearchTransport.js";
-import { parseTwitterUserPostsResponse } from "./parseAssumedResponse.js";
+import {
+  type InvalidPostsSkipped,
+  parseTwitterUserPostsResponse,
+} from "./parseAssumedResponse.js";
 
 export class DesearchPaginationError extends Error {
   readonly billing: DesearchBilling[];
@@ -19,6 +28,12 @@ export class DesearchPaginationError extends Error {
   }
 }
 
+export interface FetchHandleRetrievalHalt {
+  failureCategory: DesearchFailureCategory;
+  httpStatus?: number;
+  reason: string;
+}
+
 export interface FetchHandlePagesResult {
   posts: Post[];
   stopReason: FetchStopReason;
@@ -27,6 +42,11 @@ export interface FetchHandlePagesResult {
   requestsUsed: number;
   billing: DesearchBilling[];
   duplicatesRemoved: number;
+  invalidPostsSkipped: InvalidPostsSkipped;
+  /** Set when pagination must stop before the feed ends. */
+  handleIncompleteReason?: FetchIncompleteReason;
+  /** Set when retrieval stopped on an error before posts could be kept. */
+  retrievalHalt?: FetchHandleRetrievalHalt;
 }
 
 function advanceCursor(nextCursor: string, seenCursors: Set<string>): string {
@@ -45,6 +65,34 @@ function oldestParsedMs(posts: readonly Post[]): number | null {
     if (oldest === null || ms < oldest) oldest = ms;
   }
   return oldest;
+}
+
+function mergeSkipCounts(
+  target: InvalidPostsSkipped,
+  source: InvalidPostsSkipped,
+): void {
+  for (const [code, count] of Object.entries(source)) {
+    target[code] = (target[code] ?? 0) + count;
+  }
+}
+
+function haltFromError(err: DesearchRetrievalError): FetchHandleRetrievalHalt {
+  return {
+    failureCategory: err.category,
+    httpStatus: err.status,
+    reason: err.message,
+  };
+}
+
+function finishPartialHalt(
+  collected: Post[],
+  halt: FetchHandleRetrievalHalt,
+  handleIncompleteReason: FetchIncompleteReason | undefined,
+): FetchIncompleteReason | undefined {
+  if (collected.length > 0) {
+    return "desearch_retrieval_interrupted";
+  }
+  return handleIncompleteReason;
 }
 
 /**
@@ -70,16 +118,24 @@ export async function fetchHandlePages(
   const billing: DesearchBilling[] = [];
   const seenCursors = new Set<string>();
   let withinPageDuplicates = 0;
+  const invalidPostsSkipped: InvalidPostsSkipped = {};
+  let handleIncompleteReason: FetchIncompleteReason | undefined;
+  let retrievalHalt: FetchHandleRetrievalHalt | undefined;
 
-  const moveCursor = (nextCursor: string): string => {
-    try {
-      return advanceCursor(nextCursor, seenCursors);
-    } catch (err) {
-      if (err instanceof DesearchPaginationError) {
-        throw new DesearchPaginationError(err.message, billing);
-      }
-      throw err;
-    }
+  const returnNow = (): FetchHandlePagesResult => {
+    const deduped = dedupePostsById(collected);
+    deduped.posts.sort((a, b) => comparePostTime(b, a));
+    return {
+      posts: deduped.posts,
+      stopReason,
+      apiHasMorePages: lastResponseHasMorePages && stopReason !== "no_more_pages",
+      requestsUsed,
+      billing,
+      duplicatesRemoved: deduped.duplicatesRemoved + withinPageDuplicates,
+      invalidPostsSkipped,
+      handleIncompleteReason,
+      retrievalHalt,
+    };
   };
 
   while (true) {
@@ -94,44 +150,61 @@ export async function fetchHandlePages(
       cursor,
       options.apiBase,
     );
+    requestsUsed += 1;
     let response: Awaited<ReturnType<DesearchTransport["execute"]>>;
     try {
       response = await transport.execute(request);
     } catch (err) {
-      if (err instanceof DesearchRetrievalError) {
-        throw new DesearchRetrievalError(err.message, {
-          category: err.category,
-          status: err.status,
-          billing: [...billing, ...err.billing],
-        });
-      }
-      throw new DesearchRetrievalError("Desearch HTTPS request failed.", {
-        category: "network",
-        billing,
-      });
+      const haltErr =
+        err instanceof DesearchRetrievalError
+          ? err
+          : new DesearchRetrievalError("Desearch HTTPS request failed.", {
+              category: "network",
+              billing: [],
+            });
+      billing.push(...haltErr.billing);
+      retrievalHalt = haltFromError(haltErr);
+      handleIncompleteReason = finishPartialHalt(collected, retrievalHalt, handleIncompleteReason);
+      stopReason = "no_more_pages";
+      return returnNow();
     }
-    requestsUsed += 1;
+
     if (response.billing) billing.push(response.billing);
 
     if (response.status < 200 || response.status >= 300) {
-      throw new DesearchRetrievalError(desearchErrorMessage(response.status), {
+      const haltErr = new DesearchRetrievalError(desearchErrorMessage(response.status), {
         category: "http_status",
         status: response.status,
-        billing,
+        billing: [],
       });
+      retrievalHalt = haltFromError(haltErr);
+      handleIncompleteReason = finishPartialHalt(collected, retrievalHalt, handleIncompleteReason);
+      stopReason = "no_more_pages";
+      return returnNow();
     }
 
     const parsed = parseTwitterUserPostsResponse(username, response.body);
     if (!parsed.ok) {
-      throw new DesearchRetrievalError(
+      const haltErr = new DesearchRetrievalError(
         `Desearch response could not be parsed (${parsed.reason}).`,
-        { category: "parse", billing },
+        { category: "parse", billing: [] },
       );
+      retrievalHalt = haltFromError(haltErr);
+      handleIncompleteReason = finishPartialHalt(collected, retrievalHalt, handleIncompleteReason);
+      stopReason = "no_more_pages";
+      return returnNow();
     }
 
     lastResponseHasMorePages = parsed.hasMorePages;
     withinPageDuplicates += parsed.duplicatesRemoved;
+    mergeSkipCounts(invalidPostsSkipped, parsed.invalidPostsSkipped);
     collected.push(...parsed.posts);
+
+    if (parsed.sourceItemCount > 0 && parsed.posts.length === 0) {
+      handleIncompleteReason = "desearch_page_no_valid_posts";
+      stopReason = "no_more_pages";
+      break;
+    }
 
     const oldest = oldestParsedMs(parsed.posts);
     if (oldest !== null && oldest < options.lookbackCutoffMs) {
@@ -144,17 +217,20 @@ export async function fetchHandlePages(
       break;
     }
 
-    cursor = moveCursor(parsed.nextCursor);
+    try {
+      cursor = advanceCursor(parsed.nextCursor, seenCursors);
+    } catch (err) {
+      const message =
+        err instanceof DesearchPaginationError
+          ? err.message
+          : "Desearch pagination failed unexpectedly.";
+      const haltErr = new DesearchRetrievalError(message, { category: "parse", billing: [] });
+      retrievalHalt = haltFromError(haltErr);
+      handleIncompleteReason = finishPartialHalt(collected, retrievalHalt, handleIncompleteReason);
+      stopReason = "no_more_pages";
+      return returnNow();
+    }
   }
 
-  const deduped = dedupePostsById(collected);
-  deduped.posts.sort((a, b) => comparePostTime(b, a));
-  return {
-    posts: deduped.posts,
-    stopReason,
-    apiHasMorePages: lastResponseHasMorePages && stopReason !== "no_more_pages",
-    requestsUsed,
-    billing,
-    duplicatesRemoved: deduped.duplicatesRemoved + withinPageDuplicates,
-  };
+  return returnNow();
 }
