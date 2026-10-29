@@ -1,58 +1,33 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
+import {
+  buildChutesModelPlanForRun,
+  ChutesPreflightPlanError,
+} from "../src/analyze/buildChutesModelPlanForRun.js";
+import {
+  createDirectoryHfModelInfoTransport,
+  createFileCatalogTransport,
+} from "./support/chutesFixtureTransports.js";
+import { spawnAnalyzeWithFixtureDeps } from "./support/spawnAnalyzeWithFixtureDeps.js";
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const catalogFixturePath = path.join(repoRoot, "test/fixtures/chutesModelsCatalog.json");
 const hfFixtureDir = path.join(repoRoot, "test/fixtures/hf");
-const vendorReady =
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`) &&
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer_config.json`);
 
 const UNREACHABLE_PROVIDER_ENDPOINTS = [
   "DESEARCH_API_BASE=http://127.0.0.1:9",
   "CHUTES_CHAT_COMPLETIONS_URL=http://127.0.0.1:9/v1/chat/completions",
 ] as const;
 
-function minimalShellEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const sliceDir =
-    process.env.X_ANALYST_SLICE_DIR ??
-    mkdtempSync(path.join(tmpdir(), "x-analyst-cli-slices-"));
-  const reportsDir =
-    process.env.X_ANALYST_REPORTS_DIR ??
-    mkdtempSync(path.join(tmpdir(), "x-analyst-cli-reports-"));
-  return {
-    CHUTES_CATALOG_FIXTURE_PATH: catalogFixturePath,
-    HF_MODEL_INFO_FIXTURE_DIR: hfFixtureDir,
-    PATH: process.env.PATH ?? "",
-    HOME: process.env.HOME ?? tmpdir(),
-    X_ANALYST_SLICE_DIR: sliceDir,
-    X_ANALYST_REPORTS_DIR: reportsDir,
-    ...extra,
-  };
-}
-
-function spawnAnalyze(
-  args: string[],
-  input: { env?: NodeJS.ProcessEnv } = {},
-) {
-  return spawnSync("npm", ["run", "analyze", "--", ...args], {
-    cwd: repoRoot,
-    env: minimalShellEnv(input.env),
-    encoding: "utf8",
-  });
-}
-
 describe("npm run analyze", () => {
   it("runs offline through the npm script with a two-word question", () => {
     const outDir = mkdtempSync(path.join(tmpdir(), "analyze-out-"));
     const reportPath = path.join(outDir, "report.json");
-    const result = spawnAnalyze([
+    const result = spawnAnalyzeWithFixtureDeps([
       "--offline",
       "--yes",
       "--question",
@@ -69,7 +44,7 @@ describe("npm run analyze", () => {
 
   it("requires .env for live runs without --offline", () => {
     const missingEnv = path.join(mkdtempSync(path.join(tmpdir(), "analyze-env-")), "missing.env");
-    const result = spawnAnalyze([
+    const result = spawnAnalyzeWithFixtureDeps([
       "--yes",
       "--handles",
       "bullmacro",
@@ -80,36 +55,34 @@ describe("npm run analyze", () => {
     assert.match(result.stderr + result.stdout, /\.env|environment file/);
   });
 
-  it("stops in preflight when the pinned tokenizer is not installed", () => {
-    const envDir = mkdtempSync(path.join(tmpdir(), "analyze-no-tokenizer-"));
-    const badTokenizerDir = mkdtempSync(path.join(tmpdir(), "bad-tokenizer-"));
-    const envFile = path.join(envDir, ".env");
-    writeFileSync(
-      envFile,
-      [
-        "POSTS_PROVIDER=desearch",
-        "DESEARCH_LIVE_ENABLED=true",
-        "DESEARCH_API_KEY=unit-test-only-not-a-secret",
-        "DESEARCH_MAX_REQUESTS_PER_RUN=5",
-        "DESEARCH_MAX_REQUESTS_PER_HANDLE=3",
-        "ANALYSIS_PROVIDER=chutes",
-        "LLM_LIVE_ENABLED=true",
-        "CHUTES_API_KEY=unit-test-only-not-a-secret",
-        `LLM_TOKENIZER_DIR=${badTokenizerDir}`,
-        ...UNREACHABLE_PROVIDER_ENDPOINTS,
-      ].join("\n"),
-      "utf8",
+  it("stops in preflight when no catalog model can load a tokenizer", async () => {
+    const cacheDir = mkdtempSync(path.join(tmpdir(), "tokenizer-cache-empty-"));
+    await assert.rejects(
+      () =>
+        buildChutesModelPlanForRun({
+          env: {
+            ...withTestEnv(),
+            X_ANALYST_TOKENIZER_CACHE_DIR: cacheDir,
+          },
+          handles: ["bullmacro"],
+          question: "What is the outlook?",
+          referenceDate: "2026-10-10",
+          replay: false,
+          catalogTransport: createFileCatalogTransport(catalogFixturePath),
+          hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
+          hfDownloadTransport: {
+            async get() {
+              return { status: 404, body: Buffer.from("missing") };
+            },
+          },
+        }),
+      (err: unknown) =>
+        err instanceof ChutesPreflightPlanError &&
+        err.message === "No eligible Chutes model is available",
     );
-    const result = spawnAnalyze(["--yes", "--handles", "bullmacro", "--env-file", envFile], {
-      env: minimalShellEnv({ LLM_TOKENIZER_DIR: badTokenizerDir }),
-    });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr + result.stdout, /Preflight error:.*Qwen tokenizer files missing/);
-    assert.doesNotMatch(result.stdout, /Proceed\?/);
-    assert.doesNotMatch(result.stdout, /Report JSON:/);
   });
 
-  it("stops on a non-tty live run without --yes before any transport", { skip: !vendorReady }, () => {
+  it("stops on a non-tty live run without --yes before any transport", () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-live-gate-"));
     const envFile = path.join(envDir, ".env");
     writeFileSync(
@@ -127,7 +100,7 @@ describe("npm run analyze", () => {
       ].join("\n"),
       "utf8",
     );
-    const result = spawnAnalyze(["--handles", "bullmacro", "--env-file", envFile]);
+    const result = spawnAnalyzeWithFixtureDeps(["--handles", "bullmacro", "--env-file", envFile]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr + result.stdout, /Stopped before any request/);
     assert.doesNotMatch(result.stdout, /Report JSON:/);
@@ -152,7 +125,7 @@ describe("npm run analyze", () => {
       ].join("\n"),
       "utf8",
     );
-    const result = spawnAnalyze(["--handles", "bullmacro", "--env-file", envFile]);
+    const result = spawnAnalyzeWithFixtureDeps(["--handles", "bullmacro", "--env-file", envFile]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr + result.stdout, /Preflight error: DESEARCH_API_BASE must use https/);
     assert.doesNotMatch(result.stderr + result.stdout, /not-loopback\.example/);
@@ -160,7 +133,7 @@ describe("npm run analyze", () => {
     assert.doesNotMatch(result.stdout, /Report JSON:/);
   });
 
-  it("shows override warnings with --yes before any request", { skip: !vendorReady }, () => {
+  it("shows override warnings with --yes before any request", () => {
     const envDir = mkdtempSync(path.join(tmpdir(), "analyze-warn-yes-"));
     const envFile = path.join(envDir, ".env");
     writeFileSync(
@@ -178,14 +151,14 @@ describe("npm run analyze", () => {
       ].join("\n"),
       "utf8",
     );
-    const result = spawnAnalyze(["--yes", "--handles", "bullmacro", "--env-file", envFile]);
+    const result = spawnAnalyzeWithFixtureDeps(["--yes", "--handles", "bullmacro", "--env-file", envFile]);
     assert.match(result.stdout, /Warning: DESEARCH_API_BASE is not the default/);
     assert.match(result.stdout, /Warning: CHUTES_CHAT_COMPLETIONS_URL is not the default/);
     assert.match(result.stdout, /Desearch host: http:\/\/127\.0\.0\.1:9/);
   });
 
   it("rejects invalid or duplicate --handles before preflight", () => {
-    const invalid = spawnAnalyze(
+    const invalid = spawnAnalyzeWithFixtureDeps(
       ["--offline", "--yes", "--handles", "bullmacro,bad handle"],
     );
     assert.notEqual(invalid.status, 0);
@@ -195,10 +168,17 @@ describe("npm run analyze", () => {
     );
     assert.doesNotMatch(invalid.stdout, /DESEARCH_MAX_REQUESTS_PER_RUN:/);
 
-    const duplicate = spawnAnalyze(
+    const duplicate = spawnAnalyzeWithFixtureDeps(
       ["--offline", "--yes", "--handles", "bullmacro,BullMacro"],
     );
     assert.notEqual(duplicate.status, 0);
     assert.match(duplicate.stderr + duplicate.stdout, /Invalid handle "BullMacro": duplicate handle/);
   });
 });
+
+function withTestEnv(): NodeJS.ProcessEnv {
+  return {
+    DESEARCH_LIVE_ENABLED: "false",
+    LLM_LIVE_ENABLED: "false",
+  };
+}

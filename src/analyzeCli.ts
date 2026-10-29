@@ -9,14 +9,17 @@ import {
   utcReferenceDate,
 } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
-import { printAnalyzePreflight } from "./analyzePreflight.js";
+import { assertPrimaryRunBudgetPreflight, printAnalyzePreflight } from "./analyzePreflight.js";
+import { desearchWorstCaseListPriceUsd, sampleDesearchRequest } from "./runtime/desearchPreflight.js";
+import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "./config/desearchSettings.js";
+import { readAnalyzeCliTransportDeps } from "./analyze/analyzeCliDeps.js";
 import { createFetchChutesCatalogTransport } from "./analyze/chutesCatalogTransport.js";
 import {
   buildChutesModelPlanForRun,
   ChutesPreflightPlanError,
 } from "./analyze/buildChutesModelPlanForRun.js";
-import { liveTokenizerPreflightMessage } from "./analyze/qwenTokenizerPins.js";
 import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
+import { forbiddenTestFixtureEnvMessage } from "./analyze/testFixtureEnvGuard.js";
 import { applyChutesModelToEnv } from "./config/llmSettings.js";
 import type { ChutesModelPlan } from "./analyze/chutesModelSelection.js";
 import { validateLiveDesearchRequestLimits } from "./config/desearchSettings.js";
@@ -133,18 +136,19 @@ async function main(): Promise<void> {
   let chutesModelPlan: ChutesModelPlan | undefined;
 
   if (!options.offline) {
+    const fixtureMessage = forbiddenTestFixtureEnvMessage(runEnv);
+    if (fixtureMessage !== null) {
+      process.stderr.write(`Preflight error: ${fixtureMessage}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const transportDeps = readAnalyzeCliTransportDeps();
     const urlOverrides = validateProviderOverrides(runEnv, {
       offline: false,
       replay: options.replayPath !== undefined,
     });
     if (!urlOverrides.ok) {
       process.stderr.write(`Preflight error: ${urlOverrides.message}\n`);
-      process.exitCode = 1;
-      return;
-    }
-    const tokenizerMessage = liveTokenizerPreflightMessage(runEnv);
-    if (tokenizerMessage !== null) {
-      process.stderr.write(`${tokenizerMessage}\n`);
       process.exitCode = 1;
       return;
     }
@@ -165,8 +169,9 @@ async function main(): Promise<void> {
         question,
         referenceDate,
         replay: options.replayPath !== undefined,
-        catalogTransport: createFetchChutesCatalogTransport(),
-        hfTransport: createHuggingFaceModelInfoTransport(runEnv),
+        catalogTransport: transportDeps.catalogTransport ?? createFetchChutesCatalogTransport(),
+        hfTransport: transportDeps.hfTransport ?? createHuggingFaceModelInfoTransport(),
+        hfDownloadTransport: transportDeps.hfDownloadTransport,
       });
       applyChutesModelToEnv(runEnv, chutesModelPlan.primary.model);
     } catch (err) {
@@ -185,6 +190,40 @@ async function main(): Promise<void> {
     process.stderr.write(`Preflight error: ${inputMaxChars.message}\n`);
     process.exitCode = 1;
     return;
+  }
+
+  if (chutesModelPlan !== undefined) {
+    const replayRun = options.replayPath !== undefined;
+    const runBudget = loadDesearchRequestBudget(runEnv);
+    const perHandleCap = loadDesearchMaxRequestsPerHandle(runEnv);
+    const requestsPerHandle =
+      perHandleCap === undefined ? runBudget : Math.min(perHandleCap, runBudget);
+    const sample = sampleDesearchRequest();
+    const desearch = replayRun
+      ? null
+      : desearchWorstCaseListPriceUsd({
+          handles: handles.length,
+          requestsPerHandle,
+          sampleRequest: sample,
+        });
+    const maxRetrievedPostsPerHandle = desearch
+      ? desearch.postsPerRequest * requestsPerHandle
+      : 55;
+    try {
+      assertPrimaryRunBudgetPreflight({
+        question,
+        referenceDate,
+        handles,
+        maxRetrievedPostsPerHandle,
+        env: runEnv,
+        chutesModelPlan,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Chutes run budget preflight failed";
+      process.stderr.write(`Preflight error: ${message}\n`);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   printAnalyzePreflight({

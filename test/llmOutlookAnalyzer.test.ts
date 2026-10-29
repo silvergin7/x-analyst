@@ -209,11 +209,13 @@ describe("LlmOutlookAnalyzer", () => {
     const body = JSON.parse(ok.calls[0]!.body) as {
       max_tokens: number;
       messages: { content: string }[];
+      chat_template_kwargs: { enable_thinking: boolean };
       response_format: { json_schema: { strict: boolean } };
     };
     const prompt = body.messages.map((message) => message.content).join("\n");
     assert.equal(body.max_tokens, classificationOutputTokenCeiling(1, process.env));
-    assert.match(prompt, /\/no_think/);
+    assert.equal(body.chat_template_kwargs.enable_thinking, true);
+    assert.equal(prompt.includes("/no_think"), false);
     assert.match(prompt, /My own cautious comment/);
     assert.equal(prompt.includes("QUOTED TEXT SHOULD NOT APPEAR"), false);
     assert.equal(prompt.includes("REPOST TEXT SHOULD NOT APPEAR"), false);
@@ -333,7 +335,7 @@ describe("LlmOutlookAnalyzer", () => {
       postSource: "desearch",
       env: process.env,
       modelId: testLlmRuntimeFields().model,
-      contextLengthTokens: 40_960,
+      contextLengthTokens: 55_000,
     });
     const dropped = fitted.records.filter(
       (record) => record.reason === BEYOND_CONTEXT_WINDOW_REASON,
@@ -361,9 +363,10 @@ describe("LlmOutlookAnalyzer", () => {
       ),
       process.env,
     );
+    const narrowContext = 55_000;
     assert.equal(
       fitsModelContextWindow(
-        liveConfig().contextLengthTokens,
+        narrowContext,
         estimate.inputTokensUpper,
         maxTokens,
       ),
@@ -377,7 +380,7 @@ describe("LlmOutlookAnalyzer", () => {
       posts: fitted.sent.map((item) => ({ postId: item.post.id, relevant: false })),
     }))));
     const analyzer = new LlmOutlookAnalyzer(
-      liveConfig({ contextLengthTokens: 40_960 }),
+      liveConfig({ contextLengthTokens: 55_000 }),
       recorded.transport,
       "2026-10-10",
       "desearch",
@@ -486,12 +489,12 @@ describe("LlmOutlookAnalyzer", () => {
         process.env,
       );
       assert.equal(slicePlan.sent.length, count);
-      assert.equal(sliceEstimate.basis, "qwen3-tokenizer-conservative");
+      assert.equal(sliceEstimate.basis, "hf-tokenizer-conservative");
       assert.equal(
         fitsModelContextWindow(
           liveConfig().contextLengthTokens,
           sliceEstimate.inputTokensUpper,
-          sliceEstimate.outputTokensUpper,
+          classificationOutputTokenCeiling(slicePlan.sent.length, process.env),
         ),
         true,
       );
@@ -927,7 +930,8 @@ describe("runLlmFixtureCheck", () => {
     assert.equal(body.top_k, 20);
     assert.equal("max_completion_tokens" in body, false);
     const prompt = body.messages.map((message) => message.content).join("\n");
-    assert.match(prompt, /\/no_think/);
+    assert.equal((body as { chat_template_kwargs?: { enable_thinking?: boolean } }).chat_template_kwargs?.enable_thinking, true);
+    assert.equal(prompt.includes("/no_think"), false);
     assert.match(prompt, /Edited fixture question/);
     assert.match(prompt, /room to run/);
     assert.equal(prompt.includes("semiconductor demand"), false);

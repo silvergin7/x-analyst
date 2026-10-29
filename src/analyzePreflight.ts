@@ -9,6 +9,7 @@ import {
   modestPreflightPosts,
 } from "./analyze/preflightPostShapes.js";
 import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "./config/desearchSettings.js";
+import { LLM_RUN_BUDGET_USD } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
 import {
   describeDesearchCountOnWire,
@@ -143,7 +144,7 @@ export function buildAnalyzePreflightLines(input: {
 
   if (plan.skippedCatalogEntries > 0) {
     lines.push(
-      `Chutes catalog: ${plan.skippedCatalogEntries} malformed entries skipped`,
+      `Chutes catalog: ${plan.skippedCatalogEntries} entries skipped (unpriced or incomplete)`,
     );
   }
 
@@ -180,10 +181,30 @@ export function buildAnalyzePreflightLines(input: {
     env: input.env,
     chutesModelPlan: plan,
   });
+  const handleWord = input.handles.length === 1 ? "handle" : "handles";
   lines.push(
-    `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} summed across handles`,
+    `Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $${chutesEstimate.toFixed(6)} across ${input.handles.length} ${handleWord}`,
+  );
+  lines.push(
+    `Chutes per-run worst-case local cap: $${LLM_RUN_BUDGET_USD.toFixed(2)} (planned $${chutesEstimate.toFixed(6)} across ${input.handles.length} ${handleWord})`,
   );
   return lines;
+}
+
+export function assertPrimaryRunBudgetPreflight(input: {
+  question: string;
+  referenceDate: string;
+  handles: readonly string[];
+  maxRetrievedPostsPerHandle: number;
+  env: NodeJS.ProcessEnv;
+  chutesModelPlan: ChutesModelPlan;
+}): void {
+  const total = chutesWorstCaseEstimateUsd(input);
+  if (total > LLM_RUN_BUDGET_USD) {
+    throw new Error(
+      `Primary model worst-case estimate $${total.toFixed(6)} across ${input.handles.length} handle(s) exceeds the $${LLM_RUN_BUDGET_USD.toFixed(2)} run budget`,
+    );
+  }
 }
 
 export function printAnalyzePreflight(input: {

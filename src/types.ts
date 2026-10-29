@@ -240,6 +240,7 @@ export interface ProviderTokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  reasoningTokens?: number;
 }
 
 /**
@@ -250,7 +251,7 @@ export interface BudgetEstimate {
   inputTokensUpper: number;
   outputTokensUpper: number;
   estimatedUsd: number;
-  basis: "qwen3-tokenizer-conservative";
+  basis: "hf-tokenizer-conservative" | "qwen3-tokenizer-conservative";
   messageTokens?: number;
   responseFormatTokens?: number;
   calibrationMarginTokens?: number;

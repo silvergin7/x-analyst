@@ -9,7 +9,6 @@ import { buildChatMessages, buildChutesRequestBody } from "./llmPrompt.js";
 import {
   classificationOutputJsonByteCeiling,
   classificationOutputTokenCeiling,
-  emptyThinkingBlockTokenCeiling,
 } from "./outputBudget.js";
 import { postAliases } from "./postAliases.js";
 import { countRequestInputTokens } from "./tokenBudget.js";
@@ -92,8 +91,7 @@ export function reportFitShape(input: {
   );
   const tokens = countRequestInputTokens(body, input.env);
   const outputJsonByteCeiling = classificationOutputJsonByteCeiling(fitted.sent.length);
-  const emptyThinkingTokens = emptyThinkingBlockTokenCeiling(input.env);
-  const outputTokenCeiling = outputJsonByteCeiling + emptyThinkingTokens;
+  const outputTokenCeiling = classificationOutputTokenCeiling(fitted.sent.length, input.env);
   const bindingLimit = bindingForPlan(
     planned,
     fitted,
@@ -109,7 +107,7 @@ export function reportFitShape(input: {
     calibrationMarginTokens: tokens.calibrationMarginTokens,
     inputTokensUpper: tokens.inputTokensUpper,
     outputJsonByteCeiling,
-    emptyThinkingTokens,
+    emptyThinkingTokens: 0,
     outputTokenCeiling,
     bindingLimit,
   };

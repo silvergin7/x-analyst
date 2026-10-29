@@ -92,9 +92,11 @@ export async function buildChutesModelPlan(input: {
   env: NodeJS.ProcessEnv;
   hfTransport: HuggingFaceModelInfoTransport;
   forcedModelId?: string;
+  excludeModelIds?: readonly string[];
 }): Promise<ChutesModelPlan> {
   const forcedId = input.forcedModelId?.trim();
-  let pool = input.catalogModels;
+  const excluded = new Set(input.excludeModelIds ?? []);
+  let pool = input.catalogModels.filter((model) => !excluded.has(model.id));
   if (forcedId !== undefined && forcedId !== "") {
     const match = pool.find((model) => model.id === forcedId);
     if (match === undefined) {
@@ -137,7 +139,7 @@ export async function buildChutesModelPlan(input: {
   }
   const candidates = toCandidates(stickyRanked, input.ceilings);
   const primary = candidates[0]!;
-  const fallbacks = candidates.slice(1, 3);
+  const fallbacks = candidates.slice(1);
   const state = readChutesModelState(input.env);
   return {
     skippedCatalogEntries: input.skippedCatalogEntries,

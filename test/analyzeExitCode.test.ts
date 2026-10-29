@@ -2,19 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { saveSlice, outcomesForSlice } from "../src/runtime/savedSlice.js";
-import { existsSync } from "node:fs";
-import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
-
-const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
-const catalogFixturePath = path.join(repoRoot, "test/fixtures/chutesModelsCatalog.json");
-const hfFixtureDir = path.join(repoRoot, "test/fixtures/hf");
-const vendorReady =
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`) &&
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer_config.json`);
+import { spawnAnalyzeWithFixtureDeps } from "./support/spawnAnalyzeWithFixtureDeps.js";
 
 function chutesOnlyEnvLines(): string[] {
   return [
@@ -23,17 +13,6 @@ function chutesOnlyEnvLines(): string[] {
     "CHUTES_API_KEY=unit-test-only-not-a-secret",
     "CHUTES_CHAT_COMPLETIONS_URL=http://127.0.0.1:9/v1/chat/completions",
   ];
-}
-
-function minimalShellEnv(): NodeJS.ProcessEnv {
-  return {
-    CHUTES_CATALOG_FIXTURE_PATH: catalogFixturePath,
-    HF_MODEL_INFO_FIXTURE_DIR: hfFixtureDir,
-    PATH: process.env.PATH ?? "",
-    HOME: process.env.HOME ?? tmpdir(),
-    X_ANALYST_SLICE_DIR: mkdtempSync(path.join(tmpdir(), "x-analyst-exit-slices-")),
-    X_ANALYST_REPORTS_DIR: mkdtempSync(path.join(tmpdir(), "x-analyst-exit-reports-")),
-  };
 }
 
 function replaySlice(outcomes: Parameters<typeof outcomesForSlice>[0]): string {
@@ -50,7 +29,7 @@ function replaySlice(outcomes: Parameters<typeof outcomesForSlice>[0]): string {
 }
 
 describe("analyze CLI exit code for fetch outcomes", () => {
-  it("exits 1 on retrieval_failed replay", { skip: !vendorReady }, () => {
+  it("exits 1 on retrieval_failed replay", () => {
     const slicePath = replaySlice([
       {
         status: "retrieval_failed",
@@ -61,29 +40,37 @@ describe("analyze CLI exit code for fetch outcomes", () => {
     ]);
     const envFile = path.join(mkdtempSync(path.join(tmpdir(), "env-")), ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
-    const result = spawnSync(
-      "npm",
-      ["run", "analyze", "--", "--yes", "--handles", "bullmacro", "--replay", slicePath, "--env-file", envFile],
-      { cwd: repoRoot, env: minimalShellEnv(), encoding: "utf8" },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--env-file",
+      envFile,
+    ]);
     assert.equal(result.status, 1);
   });
 
-  it("exits 1 on desearch_page_no_valid_posts incomplete replay", { skip: !vendorReady }, () => {
+  it("exits 1 on desearch_page_no_valid_posts incomplete replay", () => {
     const slicePath = replaySlice([
       { status: "incomplete", handle: "bullmacro", reason: "desearch_page_no_valid_posts" },
     ]);
     const envFile = path.join(mkdtempSync(path.join(tmpdir(), "env-")), ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
-    const result = spawnSync(
-      "npm",
-      ["run", "analyze", "--", "--yes", "--handles", "bullmacro", "--replay", slicePath, "--env-file", envFile],
-      { cwd: repoRoot, env: minimalShellEnv(), encoding: "utf8" },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--env-file",
+      envFile,
+    ]);
     assert.equal(result.status, 1);
   });
 
-  it("exits 1 on desearch_retrieval_interrupted partial ok replay", { skip: !vendorReady }, () => {
+  it("exits 1 on desearch_retrieval_interrupted partial ok replay", () => {
     const slicePath = replaySlice([
       {
         status: "ok",
@@ -106,25 +93,33 @@ describe("analyze CLI exit code for fetch outcomes", () => {
     ]);
     const envFile = path.join(mkdtempSync(path.join(tmpdir(), "env-")), ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
-    const result = spawnSync(
-      "npm",
-      ["run", "analyze", "--", "--yes", "--handles", "bullmacro", "--replay", slicePath, "--env-file", envFile],
-      { cwd: repoRoot, env: minimalShellEnv(), encoding: "utf8" },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--env-file",
+      envFile,
+    ]);
     assert.equal(result.status, 1);
   });
 
-  it("exits 0 on request budget exhaustion incomplete replay", { skip: !vendorReady }, () => {
+  it("exits 0 on request budget exhaustion incomplete replay", () => {
     const slicePath = replaySlice([
       { status: "incomplete", handle: "bullmacro", reason: "desearch_request_budget_exhausted" },
     ]);
     const envFile = path.join(mkdtempSync(path.join(tmpdir(), "env-")), ".env");
     writeFileSync(envFile, chutesOnlyEnvLines().join("\n"), "utf8");
-    const result = spawnSync(
-      "npm",
-      ["run", "analyze", "--", "--yes", "--handles", "bullmacro", "--replay", slicePath, "--env-file", envFile],
-      { cwd: repoRoot, env: minimalShellEnv(), encoding: "utf8" },
-    );
+    const result = spawnAnalyzeWithFixtureDeps([
+      "--yes",
+      "--handles",
+      "bullmacro",
+      "--replay",
+      slicePath,
+      "--env-file",
+      envFile,
+    ]);
     assert.equal(result.status, 0);
   });
 });

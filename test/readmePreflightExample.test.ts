@@ -1,25 +1,19 @@
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { buildAnalyzePreflightLines } from "../src/analyzePreflight.js";
-import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
 import { testChutesModelPlan } from "./support/testChutesModelPlan.js";
 import {
   README_PREFLIGHT_HANDLE,
   README_PREFLIGHT_REFERENCE_DATE,
-  readmePreflightExampleEnv,
-  readmePreflightExampleLines,
   readmePreflightReadmeLines,
 } from "./support/readmePreflightExample.js";
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const readmePath = path.join(repoRoot, "README.md");
-const vendorReady =
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`) &&
-  existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer_config.json`);
 
 const CHUTES_ESTIMATE_PREFIX =
   "Chutes worst-case local estimate (not a charge; larger of modest and long post shapes):";
@@ -75,6 +69,14 @@ function buildReadmeExampleWithMockTokenizer(): string[] {
   );
 }
 
+function readmePreflightExampleEnv(): NodeJS.ProcessEnv {
+  return {
+    DESEARCH_LIVE_ENABLED: "true",
+    DESEARCH_MAX_REQUESTS_PER_RUN: "5",
+    DESEARCH_MAX_REQUESTS_PER_HANDLE: "3",
+  };
+}
+
 describe("README live preflight example", () => {
   beforeEach(() => installByteQuarterMockTokenizer());
   afterEach(() => clearMockTokenizer());
@@ -91,16 +93,11 @@ describe("README live preflight example", () => {
     assertSubsequenceInOrder(stableGenerated, stableReadmeLines);
   });
 
-  it("checks the Chutes estimate line against the pinned tokenizer when vendor is present", { skip: !vendorReady }, () => {
-    clearMockTokenizer();
-    const generatedChutes = readmePreflightReadmeLines(readmePreflightExampleLines()).find((line) =>
+  it("checks the Chutes estimate line against the fixture tokenizer mock", () => {
+    const generatedChutes = buildReadmeExampleWithMockTokenizer().find((line) =>
       line.startsWith(CHUTES_ESTIMATE_PREFIX),
     );
     assert.ok(generatedChutes !== undefined);
-    assert.match(generatedChutes, /summed across handles$/);
-  });
-
-  it("skips the Chutes estimate comparison visibly when vendor is absent", { skip: vendorReady }, () => {
-    assert.equal(vendorReady, false);
+    assert.match(generatedChutes, /across 1 handle$/);
   });
 });

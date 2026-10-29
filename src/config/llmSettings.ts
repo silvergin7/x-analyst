@@ -27,6 +27,9 @@ export const LLM_THINKING_ALLOWANCE_TOKENS = 16_000;
  */
 export const LLM_CALL_BUDGET_USD = 0.2;
 
+/** Local ceiling for committed worst-case estimates across one analyze run. */
+export const LLM_RUN_BUDGET_USD = 1;
+
 /**
  * A handle fails when unclassified sent posts are a larger share than this.
  * Exactly this share is allowed.
@@ -53,11 +56,11 @@ export const CHUTES_CATALOG_MAX_BYTES = 5 * 1024 * 1024;
  * Extra input-token allowance per chat message for template special tokens
  * that are not present in the serialized JSON body.
  */
-export const LLM_FRAMING_TOKENS_PER_MESSAGE = 32;
+export const LLM_FRAMING_TOKENS_PER_MESSAGE = 64;
 
 export const LLM_TOKENIZER_CALIBRATION_FIXED = 128;
 
-export const LLM_TOKENIZER_CALIBRATION_RATIO = 0.02;
+export const LLM_TOKENIZER_CALIBRATION_RATIO = 0.03;
 
 export const LLM_API_KEY_PLACEHOLDER = "replace_me_only_when_you_are_ready";
 
@@ -217,6 +220,11 @@ export function loadLlmRuntimeConfig(
   return { ...base, eligible: true };
 }
 
+/** Completion footprint including the thinking allowance reserved in budgets. */
+export function completionTokensContextFootprint(maxTokens: number): number {
+  return maxTokens + LLM_THINKING_ALLOWANCE_TOKENS;
+}
+
 /** True when the input ceiling plus max_tokens fits in the context window minus the safety margin. */
 export function fitsModelContextWindow(
   contextLengthTokens: number,
@@ -224,7 +232,7 @@ export function fitsModelContextWindow(
   maxTokens: number,
 ): boolean {
   return (
-    inputTokensUpper + maxTokens <=
+    inputTokensUpper + completionTokensContextFootprint(maxTokens) <=
     contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS
   );
 }

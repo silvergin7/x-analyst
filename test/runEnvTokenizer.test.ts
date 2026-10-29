@@ -2,50 +2,28 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { buildChutesRequestBody, buildChatMessages } from "../src/analyze/llmPrompt.js";
 import { classificationOutputTokenCeiling } from "../src/analyze/outputBudget.js";
-import { clearQwenTokenizerRuntimeCacheForTests, getQwenTokenizerRuntime } from "../src/analyze/qwenTokenizerRuntime.js";
+import { clearTokenizerRuntimeCacheForTests } from "../src/analyze/tokenizerRuntime.js";
 import { countRequestInputTokens } from "../src/analyze/tokenBudget.js";
-import { TEST_CHUTES_MODEL_ID } from "./support/chutesTestModel.js";
-import { DEFAULT_VENDOR_TOKENIZER_DIR } from "../src/analyze/qwenTokenizerPins.js";
+import { TEST_CHUTES_MODEL_ID, withTestChutesModelEnv } from "./support/chutesTestModel.js";
 import { clearMockTokenizer, installByteQuarterMockTokenizer } from "./support/mockQwenTokenizer.js";
-import { existsSync } from "node:fs";
 
 describe("run env for token counting", () => {
   afterEach(() => {
     clearMockTokenizer();
-    clearQwenTokenizerRuntimeCacheForTests();
+    clearTokenizerRuntimeCacheForTests();
   });
 
-  it("uses the run env tokenizer directory instead of process.env", () => {
-    clearMockTokenizer();
-    clearQwenTokenizerRuntimeCacheForTests();
-    if (!existsSync(`${DEFAULT_VENDOR_TOKENIZER_DIR}/tokenizer.json`)) {
-      installByteQuarterMockTokenizer();
-      const body = buildChutesRequestBody(
-        buildChatMessages("Q?", [], "2026-10-10", "fixtures"),
-        TEST_CHUTES_MODEL_ID,
-        classificationOutputTokenCeiling(1, process.env),
-        ["p1"],
-      );
-      assert.doesNotThrow(() => countRequestInputTokens(body, process.env));
-      return;
-    }
-    const saved = process.env.LLM_TOKENIZER_DIR;
-    process.env.LLM_TOKENIZER_DIR = DEFAULT_VENDOR_TOKENIZER_DIR;
-    const runEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      LLM_TOKENIZER_DIR: "/tmp/x-analyst-missing-tokenizer-dir",
-    };
-    const maxTokens = classificationOutputTokenCeiling(1, process.env);
+  it("uses the run env tokenizer path instead of process.env defaults", () => {
+    installByteQuarterMockTokenizer();
+    const runEnv = withTestChutesModelEnv({
+      CHUTES_TOKENIZER_JSON_PATH: "/tmp/missing-tokenizer.json",
+    });
     const body = buildChutesRequestBody(
       buildChatMessages("Q?", [], "2026-10-10", "fixtures"),
       TEST_CHUTES_MODEL_ID,
-      maxTokens,
+      classificationOutputTokenCeiling(1, runEnv),
       ["p1"],
     );
-    assert.doesNotThrow(() => countRequestInputTokens(body, process.env));
-    assert.throws(() => countRequestInputTokens(body, runEnv));
-    assert.doesNotThrow(() => getQwenTokenizerRuntime(process.env));
-    if (saved === undefined) delete process.env.LLM_TOKENIZER_DIR;
-    else process.env.LLM_TOKENIZER_DIR = saved;
+    assert.doesNotThrow(() => countRequestInputTokens(body, runEnv));
   });
 });

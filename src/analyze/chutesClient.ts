@@ -97,7 +97,17 @@ function readUsage(value: unknown): ProviderTokenUsage | null {
   ) {
     return null;
   }
-  return { promptTokens, completionTokens, totalTokens };
+  const details = usage.completion_tokens_details;
+  let reasoningTokens: number | undefined;
+  if (details && typeof details === "object") {
+    const reasoning = (details as Record<string, unknown>).reasoning_tokens;
+    if (typeof reasoning === "number" && Number.isFinite(reasoning)) {
+      reasoningTokens = reasoning;
+    }
+  }
+  return reasoningTokens === undefined
+    ? { promptTokens, completionTokens, totalTokens }
+    : { promptTokens, completionTokens, totalTokens, reasoningTokens };
 }
 
 function failWithUsage(
