@@ -177,8 +177,9 @@ export async function requestChutesCompletion(
   config: LlmRuntimeConfig,
   messages: ChatMessage[],
   transport: ChutesTransport,
-  maxTokens?: number,
-  aliases?: readonly string[],
+  env: NodeJS.ProcessEnv,
+  maxTokens: number,
+  aliases: readonly string[],
   onEstimate?: (estimate: BudgetEstimate) => void,
 ): Promise<ChutesCompletion> {
   if (!config.eligible) {
@@ -189,7 +190,7 @@ export async function requestChutesCompletion(
   }
 
   const requestBody = buildChutesRequestBody(messages, config.model, maxTokens, aliases);
-  const estimate = estimateRequestBudget(requestBody);
+  const estimate = estimateRequestBudget(requestBody, env);
   if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
     throw new LlmCallError(
       "budget",

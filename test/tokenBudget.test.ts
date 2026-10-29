@@ -36,10 +36,10 @@ describe("token budget", () => {
     const body = buildChutesRequestBody(
       buildChatMessages("Question?", sent, "2026-10-10", "desearch"),
       PRICED_LLM_MODEL,
-      classificationOutputTokenCeiling(1),
+      classificationOutputTokenCeiling(1, process.env),
       ["p1"],
     );
-    const counted = countRequestInputTokens(body);
+    const counted = countRequestInputTokens(body, process.env);
     assert.ok(counted.responseFormatTokens > 0);
     assert.ok(counted.messageTokens > counted.responseFormatTokens);
     assert.equal(
@@ -53,10 +53,10 @@ describe("token budget", () => {
     const body = buildChutesRequestBody(
       buildChatMessages("Q?", [], "2026-10-10", "desearch"),
       PRICED_LLM_MODEL,
-      classificationOutputTokenCeiling(0),
+      classificationOutputTokenCeiling(0, process.env),
       [],
     );
-    const counted = countRequestInputTokens(body);
+    const counted = countRequestInputTokens(body, process.env);
     assert.ok(counted.responseFormatTokens > 0);
     assert.equal(
       counted.inputTokensUpper,

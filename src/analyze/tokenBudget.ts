@@ -21,7 +21,7 @@ export function calibrationMarginTokens(messageTokens: number): number {
 
 export function countRequestInputTokens(
   body: ChutesRequestBody,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): InputTokenBreakdown {
   const runtime = getQwenTokenizerRuntime(env);
   const rendered = runtime.renderChat(body.messages);
@@ -41,7 +41,7 @@ export function countRequestInputTokens(
 
 export function estimateRequestBudgetFromTokenizer(
   body: ChutesRequestBody,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): BudgetEstimate {
   const input = countRequestInputTokens(body, env);
   const priced = priceTokenCeiling(input.inputTokensUpper, body.max_tokens);

@@ -195,9 +195,9 @@ export function buildChatMessages(
 
 export function buildChutesRequestBody(
   messages: ChatMessage[],
-  model: string = PRICED_LLM_MODEL,
-  maxTokens: number = classificationOutputTokenCeiling(1),
-  aliases: readonly string[] = ["p1"],
+  model: string,
+  maxTokens: number,
+  aliases: readonly string[],
 ): ChutesRequestBody {
   return {
     model,
@@ -213,7 +213,7 @@ export function buildChutesRequestBody(
 
 export function estimateRequestBudget(
   body: ChutesRequestBody,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): BudgetEstimate {
   return estimateRequestBudgetFromTokenizer(body, env);
 }

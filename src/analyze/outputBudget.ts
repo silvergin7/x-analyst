@@ -71,15 +71,13 @@ export function classificationOutputJsonByteCeiling(sentCount: number): number {
   return Buffer.byteLength(JSON.stringify(payload), "utf8");
 }
 
-export function emptyThinkingBlockTokenCeiling(
-  env: NodeJS.ProcessEnv = process.env,
-): number {
+export function emptyThinkingBlockTokenCeiling(env: NodeJS.ProcessEnv): number {
   return getQwenTokenizerRuntime(env).encode(EMPTY_THINKING_BLOCK_WITH_NEWLINES).length;
 }
 
 export function classificationOutputTokenCeiling(
   sentCount: number,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
 ): number {
   return (
     classificationOutputJsonByteCeiling(sentCount) + emptyThinkingBlockTokenCeiling(env)

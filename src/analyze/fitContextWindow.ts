@@ -18,18 +18,19 @@ export interface ContextWindowFitInput {
   question: string;
   referenceDate: string;
   postSource: PostSource;
+  env: NodeJS.ProcessEnv;
 }
 
 function estimateFits(sent: readonly SentPost[], input: ContextWindowFitInput): boolean {
   const aliases = postAliases(sent).map((item) => item.alias);
-  const maxTokens = classificationOutputTokenCeiling(sent.length);
+  const maxTokens = classificationOutputTokenCeiling(sent.length, input.env);
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, [...sent], input.referenceDate, input.postSource),
     PRICED_LLM_MODEL,
     maxTokens,
     aliases,
   );
-  const estimate = estimateRequestBudget(body);
+  const estimate = estimateRequestBudget(body, input.env);
   return fitsModelContextWindow(estimate.inputTokensUpper, maxTokens);
 }
 

@@ -55,6 +55,11 @@ function assertQuestionBound(question: string): void {
  * Fixture-source construction may omit the reference date.
  * A Desearch run must pass the date for that invocation.
  */
+export interface LlmOutlookAnalyzerOptions {
+  runEnv: NodeJS.ProcessEnv;
+  onEstimate?: (estimate: BudgetEstimate) => void;
+}
+
 export class LlmOutlookAnalyzer implements OutlookAnalyzer {
   private readonly referenceDate: string;
   private readonly postSource: PostSource;
@@ -62,9 +67,9 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
   constructor(
     config: LlmRuntimeConfig,
     transport: ChutesTransport,
-    referenceDate?: string,
-    postSource: PostSource = "fixtures",
-    private readonly onEstimate?: (estimate: BudgetEstimate) => void,
+    referenceDate: string | undefined,
+    postSource: PostSource,
+    options: LlmOutlookAnalyzerOptions,
   ) {
     this.config = config;
     this.transport = transport;
@@ -79,10 +84,14 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       throw new LlmOutputError("Analysis reference date must be YYYY-MM-DD");
     }
     this.referenceDate = parsed;
+    this.runEnv = options.runEnv;
+    this.onEstimate = options.onEstimate;
   }
 
   private readonly config: LlmRuntimeConfig;
   private readonly transport: ChutesTransport;
+  private readonly runEnv: NodeJS.ProcessEnv;
+  private readonly onEstimate?: (estimate: BudgetEstimate) => void;
 
   async analyzePerson(
     handle: string,
@@ -100,6 +109,7 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
         question: question.text,
         referenceDate: this.referenceDate,
         postSource: this.postSource,
+        env: this.runEnv,
       },
     );
     const base = {
@@ -143,7 +153,8 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       this.config,
       messages,
       this.transport,
-      classificationOutputTokenCeiling(plan.sent.length),
+      this.runEnv,
+      classificationOutputTokenCeiling(plan.sent.length, this.runEnv),
       aliases.map((item) => item.alias),
       this.onEstimate,
     );

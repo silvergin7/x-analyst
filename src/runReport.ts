@@ -380,7 +380,7 @@ export async function runReport(
             options.chutesTransport ?? createFetchChutesTransport(),
             referenceDate,
             postsSource,
-            options.onEstimate,
+            { runEnv: env, onEstimate: options.onEstimate },
           )
         : new MockOutlookAnalyzer();
     const reports: PersonOutlookReport[] = [];
