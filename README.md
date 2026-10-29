@@ -18,18 +18,18 @@ Desearch (Bittensor Subnet 22) and Chutes (Bittensor Subnet 64) are the live dat
 | Item | Value | Where it is defined |
 |------|------:|---------------------|
 | Desearch list price | $0.15 per 1,000 posts | `src/config/desearchSettings.ts` (`DESEARCH_USD_PER_THOUSAND_POSTS`) |
-| Chutes input rate | $0.104 per 1M tokens | `src/config/llmSettings.ts` (`LLM_INPUT_USD_PER_MILLION`) |
-| Chutes output rate | $0.416 per 1M tokens | `src/config/llmSettings.ts` (`LLM_OUTPUT_USD_PER_MILLION`) |
-| Local pre-call budget check | $0.05 per Chutes request | `src/config/llmSettings.ts` (`LLM_CALL_BUDGET_USD`) |
+| Chutes rates | From the selected catalog model | Preflight and per-call checks use that model’s pricing fields |
+| Local pre-call budget check | $0.20 per Chutes request | `src/config/llmSettings.ts` (`LLM_CALL_BUDGET_USD`) |
+| Local run budget check | $1.00 committed worst case per analyze run | `src/config/llmSettings.ts` (`LLM_RUN_BUDGET_USD`) |
 | Desearch requests per run | Required for live runs; `.env.example` uses 5 | `src/config/desearchSettings.ts`, `.env.example` |
 | Desearch requests per handle | Required for live runs; `.env.example` uses 3 | `src/config/desearchSettings.ts`, `.env.example` |
 | Lookback window | 30 days | `src/config.ts` (`DEFAULT_LOOKBACK_DAYS`) |
 | Post text sent to the model | 20,000 characters | `src/config/llmSettings.ts` (`LLM_INPUT_MAX_CHARS`) |
-| Model context window | 40,960 tokens | `src/config/llmSettings.ts` (`LLM_CONTEXT_WINDOW_TOKENS`) |
 | Context safety margin | 1,024 tokens | `src/config/llmSettings.ts` (`LLM_CONTEXT_SAFETY_MARGIN_TOKENS`) |
-| Priced Chutes model | `Qwen/Qwen3-32B-TEE` | `src/config/llmSettings.ts` (`PRICED_LLM_MODEL`) |
+| Thinking allowance in budgets | 16,000 tokens | `src/config/llmSettings.ts` (`LLM_THINKING_ALLOWANCE_TOKENS`) |
+| Chutes model | Automatic from catalog | [docs/chutes-model-selection.md](docs/chutes-model-selection.md) |
 
-Token counting, margins, and drop-oldest behavior: [docs/model-input.md](docs/model-input.md). Desearch request shape and preflight math: [docs/reference.md](docs/reference.md).
+Token counting, margins, and drop-oldest behavior: [docs/model-input.md](docs/model-input.md). Desearch request shape and preflight math: [docs/reference.md](docs/reference.md). Model ranking and fallbacks: [docs/chutes-model-selection.md](docs/chutes-model-selection.md).
 
 ## Try it offline first
 
@@ -69,10 +69,9 @@ Example excerpt (trimmed):
 | `ANALYSIS_PROVIDER` | Analysis backend | `chutes` |
 | `LLM_LIVE_ENABLED` | Allow Chutes calls | `true` |
 | `CHUTES_API_KEY` | Chutes credential | `replace_me_only_when_you_are_ready` |
-| `LLM_MODEL` | Must match coded rates | `Qwen/Qwen3-32B-TEE` |
+| `LLM_MODEL` | Optional force a catalog id | (unset = automatic) |
 
-2. Install the pinned Qwen3 tokenizer files: [docs/tokenizer.md](docs/tokenizer.md).
-3. Run `npm run analyze`. Without `--handles`, the run uses every handle listed in `config/analysts.json`; each handle is fetched and billed separately. You can pass `--handles`, `--question`, and other flags from [docs/reference.md](docs/reference.md).
+2. Run `npm run analyze`. Without `--handles`, the run uses every handle listed in `config/analysts.json`; each handle is fetched and billed separately. You can pass `--handles`, `--question`, and other flags from [docs/reference.md](docs/reference.md). The first live step fetches the free Chutes model catalog and caches Hugging Face tokenizers under `data/tokenizers/`.
 4. Read the preflight summary: it lists handles, limits, provider hosts (scheme, host, and port only), and worst-case local cost estimates (not provider charges).
 5. Type `y` at `Proceed? [y/N]` to send paid requests, or anything else to stop with no fetch and no model call.
 
@@ -86,10 +85,12 @@ Question: What is each analyst's current market outlook?
 Analysis reference date: 2026-10-10
 DESEARCH_MAX_REQUESTS_PER_RUN: 5
 DESEARCH_MAX_REQUESTS_PER_HANDLE: 3
-Chutes: one request per handle; model Qwen/Qwen3-32B-TEE
+Chutes: one request per handle (automatic model selection)
+Chutes model: zai-org/GLM-5.2-TEE (rank 1, worst-case $0.012000 per handle)
+Chutes fallbacks: vendor/cheap-TEE, vendor/wide-TEE
 count query parameter: not sent on GET /twitter/user/posts
 Desearch worst-case list-price estimate (not a charge): usage_count 60, list_price_usd 0.009000 (observed usage_count up to 20 per response (count not sent on the request))
-Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $0.007086 summed across handles
+Chutes worst-case local estimate (not a charge; larger of modest and long post shapes): $0.012000 across 1 handle
 ```
 
 - **Desearch host / Chutes host:** where API keys would be sent (scheme, host, and port only).
@@ -125,12 +126,13 @@ npm test
 npm run typecheck
 ```
 
-Tests force live providers off. A few tests need the vendor tokenizer tree and skip visibly when `vendor/qwen3-32b-fp8/` is missing.
+Tests force live providers off and use fixture tokenizers; no vendor tree is required.
 
-Pull requests and pushes to `main` run `npm test` and `npm run typecheck` on GitHub Actions with live providers forced off. The tokenizer files aren't downloaded there, so tests that need them show as skipped.
+Pull requests and pushes to `main` run `npm test` and `npm run typecheck` on GitHub Actions with live providers forced off.
 
 ## More detail
 
-- [docs/tokenizer.md](docs/tokenizer.md): install and verify pinned tokenizer files.
+- [docs/chutes-model-selection.md](docs/chutes-model-selection.md): catalog, eligibility, fallbacks, and tokenizer cache.
+- [docs/tokenizer.md](docs/tokenizer.md): Hugging Face tokenizer cache layout and limits.
 - [docs/model-input.md](docs/model-input.md): token budget, margin, and context window.
 - [docs/reference.md](docs/reference.md): flags, env vars, Desearch requests, and `npm run analyze:llm-fixture`.

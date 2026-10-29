@@ -1,33 +1,16 @@
-# Qwen3 tokenizer (local install)
+# Hugging Face tokenizer cache
 
-Live `npm run analyze` runs a local token budget before each Chutes call. The app counts input tokens with the same Qwen3 chat template and tokenizer files used for the priced model path. It does not download these files for you.
+Live `npm run analyze` downloads each selected model’s public `tokenizer.json` from Hugging Face into `data/tokenizers/` (override with `X_ANALYST_TOKENIZER_CACHE_DIR`). Token counts for preflight and per-call budgets use that file together with the model’s chat template assumptions documented in [model-input.md](model-input.md).
 
-## Why it is required
+## When it runs
 
-Without the pinned files under `vendor/qwen3-32b-fp8/`, a live run stops before preflight output with a clear error. Offline `--offline` runs and tests that mock the tokenizer do not need the vendor tree.
+- Preflight loads the primary ranked model’s tokenizer before printing the Chutes estimate.
+- Fallback attempts load the tokenizer for each alternate model before refitting the context window.
 
-## Install steps
+Offline `--offline` runs and unit tests inject fixture tokenizers; no cache directory is required for CI.
 
-From the repository root:
+## Requirements
 
-```bash
-mkdir -p vendor/qwen3-32b-fp8
-REV=aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df
-HF_REPO=Qwen/Qwen3-32B-FP8
-URL_JSON="https://huggingface.co/${HF_REPO}/resolve/${REV}/tokenizer.json"
-URL_CFG="https://huggingface.co/${HF_REPO}/resolve/${REV}/tokenizer_config.json"
-curl -fL -o vendor/qwen3-32b-fp8/tokenizer.json "${URL_JSON}"
-curl -fL -o vendor/qwen3-32b-fp8/tokenizer_config.json "${URL_CFG}"
-sha256sum vendor/qwen3-32b-fp8/*
-```
+The Hugging Face model API must report `gated: false`, `private: false`, and a `tokenizer.json` sibling. Downloads are capped at 100 MB with a 60 s timeout. Checksums are stored beside the cached file so a matching commit can reuse the cache without re-downloading.
 
-Expected checksums (from `src/analyze/qwenTokenizerPins.ts`):
-
-| File | SHA-256 |
-|------|---------|
-| `tokenizer.json` | `aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4` |
-| `tokenizer_config.json` | `d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101` |
-
-The app also checks byte sizes (11,422,654 and 9,732). Set `LLM_TOKENIZER_DIR` to another directory only if the same files and checksums are present there.
-
-See also [model-input.md](model-input.md) for how those tokens feed the cost and context checks.
+See [chutes-model-selection.md](chutes-model-selection.md) for how tokenizer loading interacts with eligibility and fallbacks.
