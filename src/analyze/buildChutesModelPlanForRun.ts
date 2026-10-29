@@ -22,7 +22,7 @@ import {
 } from "./huggingfaceTokenizerDownload.js";
 import { applyTokenizerPinToEnv } from "./tokenizerRuntimeEnv.js";
 import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "../config/desearchSettings.js";
-import { sampleDesearchRequest } from "../runtime/desearchPreflight.js";
+import type { FetchOutcome } from "../types.js";
 
 export class ChutesPreflightPlanError extends Error {
   constructor(message: string) {
@@ -31,13 +31,34 @@ export class ChutesPreflightPlanError extends Error {
   }
 }
 
-function maxPostsPerHandle(env: NodeJS.ProcessEnv, replay: boolean): number {
-  if (replay) return 55;
+export function liveMaxPostsPerHandle(env: NodeJS.ProcessEnv): number {
   const runBudget = loadDesearchRequestBudget(env);
   const perHandleCap = loadDesearchMaxRequestsPerHandle(env);
   const requestsPerHandle =
     perHandleCap === undefined ? runBudget : Math.min(perHandleCap, runBudget);
   return 20 * requestsPerHandle;
+}
+
+export function usablePostsPerHandle(
+  handles: readonly string[],
+  outcomes: readonly FetchOutcome[],
+): number[] {
+  return handles.map((handle) => {
+    let count = 0;
+    for (const outcome of outcomes) {
+      if (outcome.handle !== handle || outcome.status !== "ok") continue;
+      if (outcome.posts.length > count) count = outcome.posts.length;
+    }
+    return count;
+  });
+}
+
+function largestPostCount(counts: readonly number[]): number {
+  let largest = 0;
+  for (const count of counts) {
+    if (count > largest) largest = count;
+  }
+  return largest;
 }
 
 function referenceContextLength(models: readonly ChutesCatalogModel[]): number {
@@ -84,7 +105,7 @@ export async function buildChutesModelPlanForRun(input: {
   handles: readonly string[];
   question: string;
   referenceDate: string;
-  replay: boolean;
+  postsPerHandle: readonly number[];
   catalogTransport: ChutesCatalogTransport;
   hfTransport: HuggingFaceModelInfoTransport;
   hfDownloadTransport?: HuggingFaceDownloadTransport;
@@ -104,7 +125,7 @@ export async function buildChutesModelPlanForRun(input: {
   }
   const ownerForcedModelId = input.ownerForcedModelId?.trim();
   const refModel = catalog.models[0]?.id ?? ownerForcedModelId ?? "unknown/model";
-  const maxPosts = maxPostsPerHandle(input.env, input.replay);
+  const maxPosts = largestPostCount(input.postsPerHandle);
   const bootstrapCeilings = computeCeilings({
     handles: input.handles,
     question: input.question,

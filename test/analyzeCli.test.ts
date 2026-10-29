@@ -67,7 +67,7 @@ describe("npm run analyze", () => {
           handles: ["bullmacro"],
           question: "What is the outlook?",
           referenceDate: "2026-10-10",
-          replay: false,
+          postsPerHandle: [20],
           catalogTransport: createFileCatalogTransport(catalogFixturePath),
           hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
           hfDownloadTransport: {

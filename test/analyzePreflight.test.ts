@@ -16,7 +16,7 @@ describe("analyze preflight Chutes estimate", () => {
       question: "What is the outlook?",
       referenceDate: "2026-10-10",
       handles: ["analyst"],
-      maxRetrievedPostsPerHandle: 3,
+      postsPerHandle: [3],
       env,
       chutesModelPlan: plan,
     });
@@ -25,10 +25,19 @@ describe("analyze preflight Chutes estimate", () => {
       question: "What is the outlook?",
       referenceDate: "2026-10-10",
       handles: ["analyst"],
-      maxRetrievedPostsPerHandle: 55,
+      postsPerHandle: [55],
       env,
       chutesModelPlan: plan,
     });
     assert.ok(withLongShape >= modestOnly);
+    const withEmptyHandle = chutesWorstCaseEstimateUsd({
+      question: "What is the outlook?",
+      referenceDate: "2026-10-10",
+      handles: ["analyst", "quiet"],
+      postsPerHandle: [3, 0],
+      env,
+      chutesModelPlan: plan,
+    });
+    assert.equal(withEmptyHandle, modestOnly);
   });
 });

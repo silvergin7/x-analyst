@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { buildChutesModelPlanForRun } from "../src/analyze/buildChutesModelPlanForRun.js";
+import {
+  buildChutesModelPlanForRun,
+  liveMaxPostsPerHandle,
+} from "../src/analyze/buildChutesModelPlanForRun.js";
 import { planAnalysisInput } from "../src/analyze/analysisInput.js";
 import { LlmOutlookAnalyzer } from "../src/analyze/llmOutlookAnalyzer.js";
 import { buildAnalyzePreflightLines } from "../src/analyzePreflight.js";
@@ -64,7 +67,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -107,7 +110,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -137,7 +140,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -206,7 +209,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -258,7 +261,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(catalogFixturePath),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -324,7 +327,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),

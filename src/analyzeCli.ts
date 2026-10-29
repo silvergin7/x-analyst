@@ -16,6 +16,8 @@ import { createFetchChutesCatalogTransport } from "./analyze/chutesCatalogTransp
 import {
   buildChutesModelPlanForRun,
   ChutesPreflightPlanError,
+  liveMaxPostsPerHandle,
+  usablePostsPerHandle,
 } from "./analyze/buildChutesModelPlanForRun.js";
 import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
 import { forbiddenTestFixtureEnvMessage } from "./analyze/testFixtureEnvGuard.js";
@@ -26,6 +28,7 @@ import { formatBudgetEstimate } from "./format/llmFixtureReport.js";
 import { formatFetchIssue, formatFullReport, formatReportFailure } from "./format/report.js";
 import { ReportConfigError, ReportRunError, runReport } from "./runReport.js";
 import { confirmProceed } from "./runtime/confirmationGate.js";
+import { loadSlice, SavedSliceError } from "./runtime/savedSlice.js";
 import { EnvFileError, loadEnvFileIntoProcess } from "./runtime/loadEnvFile.js";
 import { liveFetchEnvLooksDisabled, offlineProviderEnv } from "./runtime/offlineProviderEnv.js";
 import { chutesLiveEnvLooksDisabled, stripDesearchForReplayRun } from "./runtime/replayRunEnv.js";
@@ -132,6 +135,7 @@ async function main(): Promise<void> {
   const question = options.questionFlagSeen ? options.question : DEFAULT_QUESTION;
 
   let chutesModelPlan: ChutesModelPlan | undefined;
+  let replayPostsPerHandle: number[] | undefined;
   const ownerForcedModelId = (() => {
     const raw = runEnv.LLM_MODEL?.trim();
     return raw === undefined || raw === "" ? undefined : raw;
@@ -164,13 +168,39 @@ async function main(): Promise<void> {
         return;
       }
     }
+    if (options.replayPath !== undefined) {
+      let saved;
+      try {
+        saved = loadSlice(options.replayPath);
+      } catch (err) {
+        const message = err instanceof SavedSliceError ? err.message : "Could not read the slice file";
+        process.stderr.write(`Preflight error: ${message} No request was sent.\n`);
+        process.exitCode = 1;
+        return;
+      }
+      if (saved.handles.join("\n") !== handles.join("\n")) {
+        process.stderr.write(
+          "Preflight error: Slice handles do not match this run. No request was sent.\n",
+        );
+        process.exitCode = 1;
+        return;
+      }
+      replayPostsPerHandle = usablePostsPerHandle(handles, saved.outcomes);
+      if (replayPostsPerHandle.every((count) => count === 0)) {
+        process.stderr.write(
+          "Preflight error: Replay slice has no usable posts. No request was sent.\n",
+        );
+        process.exitCode = 1;
+        return;
+      }
+    }
     try {
       chutesModelPlan = await buildChutesModelPlanForRun({
         env: runEnv,
         handles,
         question,
         referenceDate,
-        replay: options.replayPath !== undefined,
+        postsPerHandle: replayPostsPerHandle ?? handles.map(() => liveMaxPostsPerHandle(runEnv)),
         catalogTransport: transportDeps.catalogTransport ?? createFetchChutesCatalogTransport(),
         hfTransport: transportDeps.hfTransport ?? createHuggingFaceModelInfoTransport(),
         hfDownloadTransport: transportDeps.hfDownloadTransport,
@@ -206,15 +236,14 @@ async function main(): Promise<void> {
           requestsPerHandle,
           sampleRequest: sample,
         });
-    const maxRetrievedPostsPerHandle = desearch
-      ? desearch.postsPerRequest * requestsPerHandle
-      : 55;
+    const postsPerHandle =
+      replayPostsPerHandle ?? handles.map(() => desearch!.postsPerRequest * requestsPerHandle);
     try {
       assertPrimaryRunBudgetPreflight({
         question,
         referenceDate,
         handles,
-        maxRetrievedPostsPerHandle,
+        postsPerHandle,
         env: runEnv,
         chutesModelPlan,
       });
@@ -233,6 +262,7 @@ async function main(): Promise<void> {
     replay: options.replayPath !== undefined,
     offline: options.offline,
     env: runEnv,
+    postsPerHandle: replayPostsPerHandle,
     chutesModelPlan,
   });
 

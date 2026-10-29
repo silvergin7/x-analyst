@@ -9,6 +9,7 @@ Live analyze picks a Chutes model before the confirmation prompt. Selection uses
 - The run stops when the catalog shape is invalid or no model passes eligibility.
 - Primary-model worst case summed across handles must be at most **$1.00** before confirmation.
 - Preflight prints the chosen model, up to two fallback ids, and the Chutes estimate **across N handle(s)**.
+- On replay, each handle's ceiling uses that handle's saved usable post count. Model eligibility uses the largest of those counts. A handle with no usable posts adds $0 to the summed estimate. A slice with no usable posts stops before this text.
 
 ## Eligibility (catalog + Hugging Face)
 

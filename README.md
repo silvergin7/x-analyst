@@ -104,7 +104,7 @@ Chutes worst-case local estimate (not a charge; larger of modest and long post s
 - **Desearch list-price line:** a local upper bound from caps and observed posts per response, not a Desearch charge.
 - **Chutes estimate line:** a local upper bound from synthetic post shapes and token rates, not a Chutes charge.
 
-To re-analyze a saved slice with `--replay path`, you only need Chutes live settings in `.env` (`ANALYSIS_PROVIDER`, `LLM_LIVE_ENABLED`, `CHUTES_API_KEY`). A fresh live fetch still needs the full Desearch and Chutes gates from the table above. Details: [docs/reference.md](docs/reference.md).
+To re-analyze a saved slice with `--replay path`, you only need Chutes live settings in `.env` (`ANALYSIS_PROVIDER`, `LLM_LIVE_ENABLED`, `CHUTES_API_KEY`). Replay preflight uses each handle's saved usable post count. A slice whose handles do not match, or that has no usable posts, stops before confirmation and sends no request. A fresh live fetch still needs the full Desearch and Chutes gates from the table above. Details: [docs/reference.md](docs/reference.md).
 
 ## View a report
 

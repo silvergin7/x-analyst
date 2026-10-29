@@ -47,7 +47,12 @@ describe("analyze preflight lines", () => {
   });
 
   it("prints replay lines without Desearch host or count", () => {
-    const lines = buildAnalyzePreflightLines({ ...baseInput, offline: false, replay: true });
+    const lines = buildAnalyzePreflightLines({
+      ...baseInput,
+      offline: false,
+      replay: true,
+      postsPerHandle: [1],
+    });
     assert.equal(lines[0], "Chutes host: https://llm.chutes.ai");
     assert.ok(!lines.some((line) => line.startsWith("Desearch host:")));
     assert.ok(!lines.some((line) => line.includes("count query parameter")));
@@ -73,7 +78,12 @@ describe("analyze preflight lines", () => {
   });
 
   it("mutation: replay must not show numeric Desearch request limits", () => {
-    const lines = buildAnalyzePreflightLines({ ...baseInput, offline: false, replay: true });
+    const lines = buildAnalyzePreflightLines({
+      ...baseInput,
+      offline: false,
+      replay: true,
+      postsPerHandle: [1],
+    });
     assert.ok(!lines.some((line) => /^DESEARCH_MAX_REQUESTS_PER_RUN: \d/.test(line)));
   });
 });

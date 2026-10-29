@@ -75,7 +75,7 @@ Pagination stops on lookback, request budgets, or no further cursor. Every valid
 ## Preflight output by mode
 
 - **`--offline`:** seven lines only — handles, question, reference date, both Desearch limit labels (`not required offline`), `Desearch: not used (offline)`, `Chutes: not used (offline)`. No hosts, model line, count line, or cost estimates. **`--offline --replay`** uses the same block.
-- **`--replay` (without `--offline`):** Chutes host (origin only), handles, question, reference date, both limit labels (`not required for replay`), Chutes model line, `Desearch: not used (replay), $0.000000`, then the Chutes worst-case local estimate. No Desearch host, count line, or list-price math.
+- **`--replay` (without `--offline`):** the slice is loaded first. Handles that do not match the run, or a slice with no usable posts, stop before the preflight text and before `Proceed?`, and the message ends with `No request was sent.` Otherwise: Chutes host (origin only), handles, question, reference date, both limit labels (`not required for replay`), Chutes model line, `Desearch: not used (replay), $0.000000`, then the Chutes worst-case local estimate. Each handle uses its saved usable post count (posts on an ok outcome; any other outcome counts as zero and adds $0). Model eligibility uses the largest of those counts. No Desearch host, count line, or list-price math.
 - **Live fetch:** provider warnings (non-default origins), both hosts, limits, count-on-wire note, Desearch list-price worst case, Chutes worst-case estimate.
 
 ## Desearch preflight list-price worst case
