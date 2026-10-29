@@ -170,6 +170,7 @@ export type ChutesModelAttemptKind = "sent" | "skipped";
 export interface ChutesModelAttempt {
   modelId: string;
   kind: ChutesModelAttemptKind;
+  durationMs?: number;
 }
 
 export interface PersonOutlookReport {

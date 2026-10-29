@@ -31,7 +31,7 @@ describe("preflight post shapes", () => {
       question: "What is the outlook?",
       referenceDate: "2026-10-10",
       handles: ["bullmacro"],
-      maxRetrievedPostsPerHandle: 1,
+      postsPerHandle: [1],
       env,
       chutesModelPlan: plan,
     });
@@ -39,7 +39,7 @@ describe("preflight post shapes", () => {
       question: "What is the outlook?",
       referenceDate: "2026-10-10",
       handles: ["bullmacro"],
-      maxRetrievedPostsPerHandle: 60,
+      postsPerHandle: [60],
       env,
       chutesModelPlan: plan,
     });

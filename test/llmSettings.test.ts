@@ -2,17 +2,19 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
-  completionTokensContextFootprint,
+  LLM_THINKING_ALLOWANCE_TOKENS,
+  chutesRequestMaxTokens,
   fitsModelContextWindow,
 } from "../src/config/llmSettings.js";
 
 describe("fitsModelContextWindow", () => {
   it("mutation: rejects input plus max_tokens above the window budget", () => {
-    const maxTokens = 800;
+    const outputCeiling = 800;
+    const maxTokens = outputCeiling + LLM_THINKING_ALLOWANCE_TOKENS;
     const contextLengthTokens = 40_960;
     const budget = contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS;
-    const footprint = completionTokensContextFootprint(maxTokens);
-    assert.equal(fitsModelContextWindow(contextLengthTokens, budget - footprint, maxTokens), true);
-    assert.equal(fitsModelContextWindow(contextLengthTokens, budget - footprint + 1, maxTokens), false);
+    assert.equal(chutesRequestMaxTokens(outputCeiling), maxTokens);
+    assert.equal(fitsModelContextWindow(contextLengthTokens, budget - maxTokens, maxTokens), true);
+    assert.equal(fitsModelContextWindow(contextLengthTokens, budget - maxTokens + 1, maxTokens), false);
   });
 });

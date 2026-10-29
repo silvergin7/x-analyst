@@ -41,7 +41,18 @@ function mockRunEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 function withSliceDir(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...env, X_ANALYST_SLICE_DIR: testSliceDir };
+  const statePath = process.env.X_ANALYST_MODEL_STATE_PATH;
+  const tokenizerCacheDir = process.env.X_ANALYST_TOKENIZER_CACHE_DIR;
+  return {
+    ...(typeof statePath === "string" && statePath.trim() !== ""
+      ? { X_ANALYST_MODEL_STATE_PATH: statePath }
+      : {}),
+    ...(typeof tokenizerCacheDir === "string" && tokenizerCacheDir.trim() !== ""
+      ? { X_ANALYST_TOKENIZER_CACHE_DIR: tokenizerCacheDir }
+      : {}),
+    ...env,
+    X_ANALYST_SLICE_DIR: testSliceDir,
+  };
 }
 
 function tweet(id: string, quote: boolean, username = "bullmacro") {
@@ -276,6 +287,34 @@ describe("runReport live gates", () => {
       );
       assert.equal(posts.calls.length, 0);
     }
+  });
+
+  it("records elapsed time on a sent Chutes attempt", async () => {
+    const posts = desearchTransport([tweet("live-1", false)]);
+    const model = chutesTransport(
+      classified("bullish", "The supplied original says growth remains constructive.", ["p1"]),
+    );
+    const result = await runReport(["bullmacro"], question, {
+      chutesModelPlan: testChutesModelPlan(),
+      referenceDate: "2026-11-02",
+      env: desearchEnv(),
+      cache: createFetchSliceCache(),
+      desearchTransport: posts.transport,
+      chutesTransport: model.transport,
+    });
+    const attempt = result.reports[0]?.llmModelAttempts?.[0];
+    assert.equal(attempt?.kind, "sent");
+    assert.equal(Number.isFinite(attempt?.durationMs), true);
+    assert.ok((attempt?.durationMs ?? -1) >= 0);
+    const text = formatFullReport(question.text, [], result.reports, {
+      postsSource: result.postsSource,
+      analysisSource: result.analysisSource,
+      referenceDate: result.referenceDate,
+      fetchedAt: result.fetchedAt,
+      reused: result.reused,
+      billing: result.billing,
+    });
+    assert.match(text, /Chutes models: .* \(\d+ ms\)/);
   });
 
   it("sends retrieved posts to Chutes with the invocation date and no fixture wording", async () => {

@@ -4,12 +4,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { buildChutesModelPlanForRun } from "../src/analyze/buildChutesModelPlanForRun.js";
+import {
+  buildChutesModelPlanForRun,
+  liveMaxPostsPerHandle,
+} from "../src/analyze/buildChutesModelPlanForRun.js";
 import { planAnalysisInput } from "../src/analyze/analysisInput.js";
 import { LlmOutlookAnalyzer } from "../src/analyze/llmOutlookAnalyzer.js";
 import { buildAnalyzePreflightLines } from "../src/analyzePreflight.js";
 import { llmRuntimeConfigForChutesPlan } from "../src/config/llmSettings.js";
+import { formatBudgetEstimate } from "../src/format/llmFixtureReport.js";
 import { runReport } from "../src/runReport.js";
+import type { BudgetEstimate } from "../src/types.js";
 import type { ChutesTransport } from "../src/analyze/chutesClient.js";
 import { FIXTURE_POSTS_BY_HANDLE } from "../src/fixtures/samplePosts.js";
 import type { Post } from "../src/types.js";
@@ -28,6 +33,7 @@ const threeModelCatalog = path.join(
   repoRoot,
   "test/fixtures/chutesModelsCatalogThreeEligible.json",
 );
+const catalogFixturePath = path.join(repoRoot, "test/fixtures/chutesModelsCatalog.json");
 const hfFixtureDir = path.join(repoRoot, "test/fixtures/hf");
 const tokenizerFixture = path.join(repoRoot, "test/fixtures/tokenizer.json");
 const question = { text: "What is each analyst's current market outlook?" };
@@ -61,7 +67,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -104,7 +110,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -134,7 +140,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -203,7 +209,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
@@ -235,6 +241,80 @@ describe("Chutes run model plan", () => {
     assert.equal(env.LLM_MODEL, "rank1/primary-TEE");
   });
 
+  it("prices the printed Chutes estimate from the selected catalog model", async () => {
+    const cacheDir = mkdtempSync(path.join(tmpdir(), "tokenizer-cache-price-"));
+    const env = withTestChutesModelEnv({
+      POSTS_PROVIDER: "mock",
+      ANALYSIS_PROVIDER: "chutes",
+      LLM_LIVE_ENABLED: "true",
+      CHUTES_API_KEY: "test-key",
+      X_ANALYST_TOKENIZER_CACHE_DIR: cacheDir,
+      X_ANALYST_SLICE_DIR: testSliceDir,
+      X_ANALYST_MODEL_STATE_PATH: emptyModelStatePath(),
+    });
+    delete env.LLM_MODEL;
+    delete env.CHUTES_MODEL_PROMPT_USD_PER_MILLION;
+    delete env.CHUTES_MODEL_COMPLETION_USD_PER_MILLION;
+    delete env.CHUTES_MODEL_CONTEXT_LENGTH;
+    const plan = await buildChutesModelPlanForRun({
+      env,
+      handles: ["bullmacro"],
+      question: question.text,
+      referenceDate: "2026-10-10",
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
+      catalogTransport: createFileCatalogTransport(catalogFixturePath),
+      hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
+      hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),
+    });
+    const pricing = plan.primary.model.pricing;
+    const payload = classifiedOutlook({
+      outlook: "bullish",
+      explanation: "Constructive fixture tone on liquidity and earnings.",
+      posts: [
+        { postId: "b1", relevant: true, asset_class: "macro", stance: "bullish" },
+        { postId: "b2", relevant: true, asset_class: "equities", stance: "bullish" },
+      ],
+    });
+    const content = JSON.stringify(modelFor(fixturePosts, payload));
+    const calls: { body: string }[] = [];
+    let estimate: BudgetEstimate | undefined;
+    const printed: string[] = [];
+    const chutesTransport: ChutesTransport = {
+      async post(_url, request) {
+        calls.push({ body: request.body });
+        return {
+          status: 200,
+          bodyText: JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+        };
+      },
+    };
+    const result = await runReport(["bullmacro"], question, {
+      referenceDate: "2026-10-10",
+      env,
+      chutesModelPlan: plan,
+      chutesTransport,
+      onEstimate: (value) => {
+        estimate = value;
+        printed.push(formatBudgetEstimate(value));
+      },
+    });
+    assert.equal(result.reports.length, 1);
+    assert.equal(calls.length, 1);
+    assert.ok(estimate);
+    const body = JSON.parse(calls[0]!.body) as { max_tokens: number };
+    const priced = estimate as BudgetEstimate;
+    const expected =
+      (priced.inputTokensUpper * pricing.promptUsdPerMillion) / 1_000_000 +
+      (body.max_tokens * pricing.completionUsdPerMillion) / 1_000_000;
+    assert.equal(priced.estimatedUsd, expected);
+    assert.ok(priced.estimatedUsd > 0);
+    assert.match(printed[0] ?? "", /Pessimistic estimate \$/);
+    assert.ok((printed[0] ?? "").includes(priced.estimatedUsd.toFixed(6)));
+  });
+
   it("does not write selected model pricing into env during analysis", async () => {
     const env = withTestChutesModelEnv({
       LLM_MODEL: "rank1/primary-TEE",
@@ -247,7 +327,7 @@ describe("Chutes run model plan", () => {
       handles: ["bullmacro"],
       question: question.text,
       referenceDate: "2026-10-10",
-      replay: false,
+      postsPerHandle: [liveMaxPostsPerHandle(env)],
       catalogTransport: createFileCatalogTransport(threeModelCatalog),
       hfTransport: createDirectoryHfModelInfoTransport(hfFixtureDir),
       hfDownloadTransport: createFileTokenizerDownloadTransport(tokenizerFixture),

@@ -6,7 +6,17 @@ export const TEST_CHUTES_MODEL_ID = "zai-org/GLM-5.2-TEE";
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..");
 export const TEST_TOKENIZER_JSON_PATH = path.join(repoRoot, "test/fixtures/tokenizer.json");
 
+function testPath(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const own = env[key];
+  if (typeof own === "string" && own.trim() !== "") return own;
+  const fromProcess = process.env[key];
+  if (typeof fromProcess === "string" && fromProcess.trim() !== "") return fromProcess;
+  return undefined;
+}
+
 export function withTestChutesModelEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const statePath = testPath(env, "X_ANALYST_MODEL_STATE_PATH");
+  const tokenizerCacheDir = testPath(env, "X_ANALYST_TOKENIZER_CACHE_DIR");
   return {
     ...env,
     LLM_MODEL: TEST_CHUTES_MODEL_ID,
@@ -17,6 +27,10 @@ export function withTestChutesModelEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
     CHUTES_TOKENIZER_ROOT: "zai-org/GLM-5.2",
     CHUTES_TOKENIZER_COMMIT: "a".repeat(40),
     CHUTES_TOKENIZER_SHA256: "test-fixture-sha-not-a-real-pin",
+    ...(statePath === undefined ? {} : { X_ANALYST_MODEL_STATE_PATH: statePath }),
+    ...(tokenizerCacheDir === undefined
+      ? {}
+      : { X_ANALYST_TOKENIZER_CACHE_DIR: tokenizerCacheDir }),
   };
 }
 

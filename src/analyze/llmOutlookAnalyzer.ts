@@ -40,6 +40,7 @@ import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
 import type { HuggingFaceModelInfoTransport } from "./huggingfaceModelInfo.js";
 import { buildChatMessages, estimateRequestBudget, buildChutesRequestBody } from "./llmPrompt.js";
 import {
+  chutesRequestMaxTokens,
   fitsModelContextWindow,
   loadLlmRuntimeConfig,
   LLM_CALL_BUDGET_USD,
@@ -215,7 +216,9 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
     );
     if (refit.sent.length === 0) return null;
     const aliases = postAliases(refit.sent).map((item) => item.alias);
-    const maxTokens = classificationOutputTokenCeiling(refit.sent.length, this.runEnv, runtime);
+    const maxTokens = chutesRequestMaxTokens(
+      classificationOutputTokenCeiling(refit.sent.length, this.runEnv, runtime),
+    );
     const messages = buildChatMessages(
       question,
       refit.sent,
@@ -311,7 +314,9 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
       this.postSource,
     );
     const runtime = binding?.tokenizerRuntime;
-    const maxTokens = classificationOutputTokenCeiling(plan.sent.length, this.runEnv, runtime);
+    const maxTokens = chutesRequestMaxTokens(
+      classificationOutputTokenCeiling(plan.sent.length, this.runEnv, runtime),
+    );
     const aliasIds = aliases.map((item) => item.alias);
     const initialAttempt: PreparedChutesAttempt = {
       config: activeConfig,
@@ -345,24 +350,30 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
             onEstimate: this.onEstimate,
             runLedger: this.runLedger,
           })
-        : {
-            completion: await requestChutesCompletion(
-              activeConfig,
-              messages,
-              this.transport,
-              this.runEnv,
-              maxTokens,
-              aliasIds,
-              this.onEstimate,
-              this.runLedger,
-              runtime,
-            ),
+        : await requestChutesCompletion(
+            activeConfig,
+            messages,
+            this.transport,
+            this.runEnv,
+            maxTokens,
+            aliasIds,
+            this.onEstimate,
+            this.runLedger,
+            runtime,
+          ).then((completion) => ({
+            completion,
             modelId: activeConfig.model,
             modelsTried: [activeConfig.model],
-            modelAttempts: [{ modelId: activeConfig.model, kind: "sent" as const }],
+            modelAttempts: [
+              {
+                modelId: activeConfig.model,
+                kind: "sent" as const,
+                durationMs: completion.durationMs,
+              },
+            ],
             tokenizerPin: initialAttempt.tokenizerPin,
             tokenizerJsonPath: initialAttempt.tokenizerJsonPath,
-          };
+          }));
     const completion = callResult.completion;
     if (callResult.tokenizerPin !== undefined && callResult.tokenizerJsonPath !== undefined) {
       this.commitSuccessfulModel(

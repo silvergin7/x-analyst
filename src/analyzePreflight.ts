@@ -9,7 +9,7 @@ import {
   modestPreflightPosts,
 } from "./analyze/preflightPostShapes.js";
 import { loadDesearchMaxRequestsPerHandle, loadDesearchRequestBudget } from "./config/desearchSettings.js";
-import { LLM_RUN_BUDGET_USD } from "./config/llmSettings.js";
+import { LLM_RUN_BUDGET_USD, chutesRequestMaxTokens } from "./config/llmSettings.js";
 import { DEFAULT_QUESTION } from "./config.js";
 import {
   describeDesearchCountOnWire,
@@ -45,7 +45,7 @@ function chutesEstimateForPosts(input: {
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
     input.modelId,
-    classificationOutputTokenCeiling(fitted.sent.length, input.env),
+    chutesRequestMaxTokens(classificationOutputTokenCeiling(fitted.sent.length, input.env)),
     aliases,
   );
   return estimateRequestBudget(body, input.env, input.pricing).estimatedUsd;
@@ -55,15 +55,18 @@ export function chutesWorstCaseEstimateUsd(input: {
   question: string;
   referenceDate: string;
   handles: readonly string[];
-  maxRetrievedPostsPerHandle: number;
+  postsPerHandle: readonly number[];
   env: NodeJS.ProcessEnv;
   chutesModelPlan: ChutesModelPlan;
 }): number {
   const primary = input.chutesModelPlan.primary.model;
   let total = 0;
-  for (const handle of input.handles) {
+  for (let index = 0; index < input.handles.length; index += 1) {
+    const count = input.postsPerHandle[index] ?? 0;
+    if (count <= 0) continue;
+    const handle = input.handles[index]!;
     const modestUsd = chutesEstimateForPosts({
-      posts: modestPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
+      posts: modestPreflightPosts(count, handle),
       handle,
       question: input.question,
       referenceDate: input.referenceDate,
@@ -73,7 +76,7 @@ export function chutesWorstCaseEstimateUsd(input: {
       pricing: primary.pricing,
     });
     const longUsd = chutesEstimateForPosts({
-      posts: longPreflightPosts(input.maxRetrievedPostsPerHandle, handle),
+      posts: longPreflightPosts(count, handle),
       handle,
       question: input.question,
       referenceDate: input.referenceDate,
@@ -99,6 +102,7 @@ export function buildAnalyzePreflightLines(input: {
   replay: boolean;
   offline: boolean;
   env: NodeJS.ProcessEnv;
+  postsPerHandle?: readonly number[];
   chutesModelPlan?: ChutesModelPlan;
 }): string[] {
   const mode = { offline: input.offline, replay: input.replay };
@@ -171,13 +175,17 @@ export function buildAnalyzePreflightLines(input: {
     );
   }
 
+  const postsPerHandle = input.replay
+    ? input.postsPerHandle
+    : input.handles.map(() => desearch!.postsPerRequest * requestsPerHandle);
+  if (postsPerHandle === undefined) {
+    throw new Error("Replay preflight requires a post count for each handle");
+  }
   const chutesEstimate = chutesWorstCaseEstimateUsd({
     question: input.question,
     referenceDate: input.referenceDate,
     handles: input.handles,
-    maxRetrievedPostsPerHandle: desearch
-      ? desearch.postsPerRequest * requestsPerHandle
-      : 55,
+    postsPerHandle,
     env: input.env,
     chutesModelPlan: plan,
   });
@@ -195,7 +203,7 @@ export function assertPrimaryRunBudgetPreflight(input: {
   question: string;
   referenceDate: string;
   handles: readonly string[];
-  maxRetrievedPostsPerHandle: number;
+  postsPerHandle: readonly number[];
   env: NodeJS.ProcessEnv;
   chutesModelPlan: ChutesModelPlan;
 }): void {
@@ -214,6 +222,7 @@ export function printAnalyzePreflight(input: {
   replay: boolean;
   offline: boolean;
   env: NodeJS.ProcessEnv;
+  postsPerHandle?: readonly number[];
   chutesModelPlan?: ChutesModelPlan;
 }): void {
   process.stdout.write(`${buildAnalyzePreflightLines(input).join("\n")}\n`);

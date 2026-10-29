@@ -49,6 +49,8 @@ import { readAnalyzeCliTransportDeps } from "./analyze/analyzeCliDeps.js";
 import { createFetchChutesCatalogTransport } from "./analyze/chutesCatalogTransport.js";
 import {
   buildChutesModelPlanForRun,
+  liveMaxPostsPerHandle,
+  usablePostsPerHandle,
 } from "./analyze/buildChutesModelPlanForRun.js";
 import { createHuggingFaceModelInfoTransport } from "./analyze/huggingfaceModelInfoTransport.js";
 import { recordValidChutesModel } from "./analyze/chutesModelState.js";
@@ -449,13 +451,15 @@ export async function runReport(
       (ownerForcedModelId !== undefined && ownerForcedModelId !== "")
         ? undefined
         : async (excludeModelIds: readonly string[]) => {
-            const replay = options.replayPath !== undefined;
             const plan = await buildChutesModelPlanForRun({
               env,
               handles,
               question: question.text,
               referenceDate: analysisDate,
-              replay,
+              postsPerHandle:
+                options.replayPath !== undefined
+                  ? usablePostsPerHandle(handles, outcomes)
+                  : handles.map(() => liveMaxPostsPerHandle(env)),
               catalogTransport,
               hfTransport,
               hfDownloadTransport,

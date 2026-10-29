@@ -27,6 +27,8 @@ import {
   DEFAULT_CHUTES_CHAT_COMPLETIONS_URL,
   LLM_CALL_BUDGET_USD,
   LLM_INPUT_MAX_CHARS,
+  LLM_THINKING_ALLOWANCE_TOKENS,
+  chutesRequestMaxTokens,
   fitsModelContextWindow,
   loadLlmRuntimeConfig,
 } from "../src/config/llmSettings.js";
@@ -218,7 +220,10 @@ describe("LlmOutlookAnalyzer", () => {
       response_format: { json_schema: { strict: boolean } };
     };
     const prompt = body.messages.map((message) => message.content).join("\n");
-    assert.equal(body.max_tokens, classificationOutputTokenCeiling(1, process.env));
+    assert.equal(
+      body.max_tokens,
+      classificationOutputTokenCeiling(1, process.env) + LLM_THINKING_ALLOWANCE_TOKENS,
+    );
     assert.equal(body.chat_template_kwargs.enable_thinking, true);
     assert.equal(prompt.includes("/no_think"), false);
     assert.match(prompt, /My own cautious comment/);
@@ -358,7 +363,9 @@ describe("LlmOutlookAnalyzer", () => {
       assert.equal(record.disposition, "excluded");
       assert.ok(record.timestamp < oldestSent.post.timestamp);
     }
-    const maxTokens = classificationOutputTokenCeiling(fitted.sent.length, process.env);
+    const maxTokens = chutesRequestMaxTokens(
+      classificationOutputTokenCeiling(fitted.sent.length, process.env),
+    );
     const estimate = estimateRequestBudget(
       buildChutesRequestBody(
         buildChatMessages(question.text, fitted.sent, "2026-10-10", "desearch"),
@@ -367,6 +374,7 @@ describe("LlmOutlookAnalyzer", () => {
         postAliases(fitted.sent).map((item) => item.alias),
       ),
       process.env,
+      testLlmRuntimeFields().modelPricing,
     );
     const narrowContext = 55_000;
     assert.equal(
@@ -397,7 +405,10 @@ describe("LlmOutlookAnalyzer", () => {
       max_tokens: number;
       messages: { content: string }[];
     };
-    assert.equal(body.max_tokens, classificationOutputTokenCeiling(report.postsExamined, process.env));
+    assert.equal(
+      body.max_tokens,
+      chutesRequestMaxTokens(classificationOutputTokenCeiling(report.postsExamined, process.env)),
+    );
     const prompt = body.messages.map((message) => message.content).join("\n");
     for (const record of dropped) {
       assert.equal(prompt.includes(record.postId), false);
@@ -428,6 +439,74 @@ describe("LlmOutlookAnalyzer", () => {
     const analyzer = new LlmOutlookAnalyzer(liveConfig(), recorded.transport, undefined, "fixtures", { runEnv: process.env });
     const report = await analyzer.analyzePerson("analyst", posts, question, complete);
     assert.equal(report.outlook, "unclear");
+  });
+
+  it("ends a call that never answers with the timeout error", async () => {
+    let posts = 0;
+    const transport: ChutesTransport = {
+      async post() {
+        posts += 1;
+        return new Promise(() => undefined);
+      },
+    };
+    const started = Date.now();
+    await assert.rejects(
+      () =>
+        requestChutesCompletion(
+          liveConfig(),
+          [{ role: "user", content: "hi" }],
+          transport,
+          process.env,
+          800,
+          ["p1"],
+          undefined,
+          undefined,
+          undefined,
+          40,
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof LlmCallError);
+        assert.equal(err.code, "timeout");
+        assert.equal(err.message, "Chutes request timed out");
+        assert.equal(Number.isFinite(err.durationMs), true);
+        assert.ok((err.durationMs ?? 0) < 5_000);
+        return true;
+      },
+    );
+    assert.equal(posts, 1);
+    assert.ok(Date.now() - started < 5_000);
+  });
+
+  it("stops before any post when Chutes pricing is missing", async () => {
+    const missing = {
+      promptUsdPerMillion: undefined,
+      completionUsdPerMillion: undefined,
+    } as unknown as LlmRuntimeConfig["modelPricing"];
+    const badPrices = [
+      missing,
+      { promptUsdPerMillion: 0, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: -1, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: Number.NaN, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: Number.POSITIVE_INFINITY, completionUsdPerMillion: 2 },
+      { promptUsdPerMillion: 0.5, completionUsdPerMillion: 0 },
+      { promptUsdPerMillion: 0.5, completionUsdPerMillion: Number.NaN },
+    ];
+    for (const modelPricing of badPrices) {
+      const recorded = recordingTransport();
+      await assert.rejects(
+        () =>
+          requestChutesCompletion(
+            liveConfig({ modelPricing }),
+            [{ role: "user", content: "hi" }],
+            recorded.transport,
+            process.env,
+            800,
+            ["p1"],
+          ),
+        (err: unknown) => err instanceof LlmCallError && err.code === "gate",
+      );
+      assert.equal(recorded.calls.length, 0);
+    }
   });
 
   it("rejects an over-budget request before any HTTP call", async () => {
@@ -466,10 +545,11 @@ describe("LlmOutlookAnalyzer", () => {
       buildChutesRequestBody(
         buildChatMessages(question.text, modestPlan.sent, "2026-10-10", "desearch"),
         testLlmRuntimeFields().model,
-        classificationOutputTokenCeiling(modestPlan.sent.length, process.env),
+        chutesRequestMaxTokens(classificationOutputTokenCeiling(modestPlan.sent.length, process.env)),
         postAliases(modestPlan.sent).map((item) => item.alias),
       ),
       process.env,
+      testLlmRuntimeFields().modelPricing,
     );
     assert.equal(modestPlan.sent.length, 60);
     assert.ok(modestEstimate.estimatedUsd <= LLM_CALL_BUDGET_USD);
@@ -488,10 +568,11 @@ describe("LlmOutlookAnalyzer", () => {
         buildChutesRequestBody(
           buildChatMessages(question.text, slicePlan.sent, "2026-10-10", "desearch"),
           testLlmRuntimeFields().model,
-          classificationOutputTokenCeiling(slicePlan.sent.length, process.env),
+          chutesRequestMaxTokens(classificationOutputTokenCeiling(slicePlan.sent.length, process.env)),
           postAliases(slicePlan.sent).map((item) => item.alias),
         ),
         process.env,
+        testLlmRuntimeFields().modelPricing,
       );
       assert.equal(slicePlan.sent.length, count);
       assert.equal(sliceEstimate.basis, "hf-tokenizer-conservative");
@@ -499,7 +580,9 @@ describe("LlmOutlookAnalyzer", () => {
         fitsModelContextWindow(
           liveConfig().contextLengthTokens,
           sliceEstimate.inputTokensUpper,
-          classificationOutputTokenCeiling(slicePlan.sent.length, process.env),
+          chutesRequestMaxTokens(
+            classificationOutputTokenCeiling(slicePlan.sent.length, process.env),
+          ),
         ),
         true,
       );
@@ -519,7 +602,7 @@ describe("LlmOutlookAnalyzer", () => {
           buildChatMessages(question.text, tinyPlan.sent, "2026-10-10", "desearch"),
           recorded.transport,
           process.env,
-          classificationOutputTokenCeiling(tinyPlan.sent.length, process.env),
+          chutesRequestMaxTokens(classificationOutputTokenCeiling(tinyPlan.sent.length, process.env)),
           postAliases(tinyPlan.sent).map((item) => item.alias),
         ),
       (err: unknown) =>
@@ -929,7 +1012,10 @@ describe("runLlmFixtureCheck", () => {
       messages: { content: string }[];
     };
     assert.equal(body.model, testLlmRuntimeFields().model);
-    assert.equal(body.max_tokens, classificationOutputTokenCeiling(2, process.env));
+    assert.equal(
+      body.max_tokens,
+      chutesRequestMaxTokens(classificationOutputTokenCeiling(2, process.env)),
+    );
     assert.equal(body.temperature, 0.7);
     assert.equal(body.top_p, 0.8);
     assert.equal(body.top_k, 20);

@@ -105,7 +105,7 @@ describe("analyze CLI exit code for fetch outcomes", () => {
     assert.equal(result.status, 1);
   });
 
-  it("exits 0 on request budget exhaustion incomplete replay", () => {
+  it("stops a request-budget incomplete replay that has no usable posts", () => {
     const slicePath = replaySlice([
       { status: "incomplete", handle: "bullmacro", reason: "desearch_request_budget_exhausted" },
     ]);
@@ -120,6 +120,7 @@ describe("analyze CLI exit code for fetch outcomes", () => {
       "--env-file",
       envFile,
     ]);
-    assert.equal(result.status, 0);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Replay slice has no usable posts\. No request was sent\./);
   });
 });

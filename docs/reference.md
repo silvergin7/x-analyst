@@ -50,7 +50,7 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 | `CHUTES_API_KEY` | Bearer token for Chutes. |
 | `LLM_MODEL` | Optional catalog id override when it still passes eligibility for the run. |
 | `LLM_INPUT_MAX_CHARS` | Character budget for post text sent to the model (default 20,000 when unset; malformed non-empty values stop the run). |
-| Chutes request timeout | Coded as `LLM_REQUEST_TIMEOUT_MS` (120 seconds) in `src/config/llmSettings.ts`; one attempt, no retry. |
+| Chutes request timeout | Coded as `LLM_REQUEST_TIMEOUT_MS` (900 seconds, 15 minutes) in `src/config/llmSettings.ts`; one attempt, no retry, and no fallback model when the call times out. |
 | `ANALYST_LIST_PATH` | JSON roster when `--handles` is omitted on analyze. |
 | `LLM_TOKENIZER_DIR` | Optional override directory for pinned tokenizer files. |
 | `DESEARCH_API_BASE` | Optional Desearch API base URL (default `https://api.desearch.ai`). Preflight prints **scheme, host, and port only**. A non-default origin prints a warning that your API key will be sent there. Overrides must be `http` or `https` with no userinfo, query, or fragment. Non-default origins must use **https** unless the hostname is exactly `localhost` or `127.0.0.1`. |
@@ -69,13 +69,13 @@ Pagination stops on lookback, request budgets, or no further cursor. Every valid
 ## Provider URL overrides and transport
 
 - **Desearch transport** (`src/fetch/desearch/httpTransport.ts`): uses `node:https.request`. Request URLs must use **`https:`**; an `http://` base fails at fetch time with “Desearch request URL must use https:”.
-- **Chutes transport** (`src/analyze/chutesClient.ts`): uses `fetch(url)` with the configured completions URL. **`http://` is allowed** (tests use `http://127.0.0.1:9`).
+- **Chutes transport** (`src/analyze/chutesClient.ts`): uses the pinned `undici` `fetch` with the configured completions URL. **`http://` is allowed** (tests use `http://127.0.0.1:9`). Each call uses its own dispatcher, and that dispatcher's header and body timeouts are the same value as the request timeout.
 - Preflight compares overrides to defaults by **origin** (scheme + host + port), so the default Chutes path does not count as a custom host.
 
 ## Preflight output by mode
 
 - **`--offline`:** seven lines only — handles, question, reference date, both Desearch limit labels (`not required offline`), `Desearch: not used (offline)`, `Chutes: not used (offline)`. No hosts, model line, count line, or cost estimates. **`--offline --replay`** uses the same block.
-- **`--replay` (without `--offline`):** Chutes host (origin only), handles, question, reference date, both limit labels (`not required for replay`), Chutes model line, `Desearch: not used (replay), $0.000000`, then the Chutes worst-case local estimate. No Desearch host, count line, or list-price math.
+- **`--replay` (without `--offline`):** the slice is loaded first. Handles that do not match the run, or a slice with no usable posts, stop before the preflight text and before `Proceed?`, and the message ends with `No request was sent.` Otherwise: Chutes host (origin only), handles, question, reference date, both limit labels (`not required for replay`), Chutes model line, `Desearch: not used (replay), $0.000000`, then the Chutes worst-case local estimate. Each handle uses its saved usable post count (posts on an ok outcome; any other outcome counts as zero and adds $0). Model eligibility uses the largest of those counts. No Desearch host, count line, or list-price math.
 - **Live fetch:** provider warnings (non-default origins), both hosts, limits, count-on-wire note, Desearch list-price worst case, Chutes worst-case estimate.
 
 ## Desearch preflight list-price worst case
@@ -85,6 +85,8 @@ Before confirmation on a live non-replay run, the CLI prints a **list-price** es
 - Planned HTTP requests per handle (min of per-handle cap and run budget).
 - Posts per request: **`max(count sent, 20)`**; when `count` is not sent, **20** is used as the observed maximum `usage_count` per response (`src/runtime/desearchPreflight.ts`, `DESEARCH_OBSERVED_MAX_POSTS_PER_RESPONSE`).
 - Price: **$0.15 per 1,000 posts** (`DESEARCH_USD_PER_THOUSAND_POSTS`).
+
+A timed-out Chutes call can still be billed by Chutes. The report then has no provider usage for that call, because usage arrives only with a completed response. Each sent attempt records `durationMs` on `llmModelAttempts` when the HTTP call started. Older reports omit that field and still load.
 
 ## `npm run analyze:llm-fixture`
 

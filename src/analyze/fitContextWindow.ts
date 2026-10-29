@@ -1,4 +1,8 @@
-import { fitsModelContextWindow, loadLlmRuntimeConfig } from "../config/llmSettings.js";
+import {
+  chutesRequestMaxTokens,
+  fitsModelContextWindow,
+  loadLlmRuntimeConfig,
+} from "../config/llmSettings.js";
 import type { PostSource } from "../types.js";
 import {
   BEYOND_CONTEXT_WINDOW_REASON,
@@ -10,11 +14,8 @@ import { classificationOutputTokenCeiling } from "./outputBudget.js";
 import type { TokenizerRuntime } from "./tokenizerRuntime.js";
 import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
 import { postAliases } from "./postAliases.js";
-import {
-  buildChatMessages,
-  buildChutesRequestBody,
-  estimateRequestBudget,
-} from "./llmPrompt.js";
+import { countRequestInputTokens } from "./tokenBudget.js";
+import { buildChatMessages, buildChutesRequestBody } from "./llmPrompt.js";
 
 export interface ContextWindowFitInput {
   question: string;
@@ -50,15 +51,17 @@ function estimateFits(sent: readonly SentPost[], input: ContextWindowFitInput): 
   const { modelId, contextLengthTokens } = resolveModelContext(input);
   const runtime = resolveTokenizerRuntime(input);
   const aliases = postAliases(sent).map((item) => item.alias);
-  const maxTokens = classificationOutputTokenCeiling(sent.length, input.env, runtime);
+  const maxTokens = chutesRequestMaxTokens(
+    classificationOutputTokenCeiling(sent.length, input.env, runtime),
+  );
   const body = buildChutesRequestBody(
     buildChatMessages(input.question, [...sent], input.referenceDate, input.postSource),
     modelId,
     maxTokens,
     aliases,
   );
-  const estimate = estimateRequestBudget(body, input.env, undefined, runtime);
-  return fitsModelContextWindow(contextLengthTokens, estimate.inputTokensUpper, maxTokens);
+  const counted = countRequestInputTokens(body, input.env, runtime);
+  return fitsModelContextWindow(contextLengthTokens, counted.inputTokensUpper, maxTokens);
 }
 
 /**

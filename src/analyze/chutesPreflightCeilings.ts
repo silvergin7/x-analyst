@@ -1,13 +1,14 @@
 import { planAnalysisInput } from "./analysisInput.js";
 import { fitAnalysisInputToContextWindow } from "./fitContextWindow.js";
-import { buildChatMessages, buildChutesRequestBody, estimateRequestBudget } from "./llmPrompt.js";
+import { countRequestInputTokens } from "./tokenBudget.js";
+import { buildChatMessages, buildChutesRequestBody } from "./llmPrompt.js";
 import { classificationOutputJsonByteCeiling, classificationOutputTokenCeiling } from "./outputBudget.js";
 import { postAliases } from "./postAliases.js";
 import {
   longPreflightPosts,
   modestPreflightPosts,
 } from "./preflightPostShapes.js";
-import { loadInputMaxChars } from "../config/llmSettings.js";
+import { chutesRequestMaxTokens, loadInputMaxChars } from "../config/llmSettings.js";
 import type { HandleTokenCeilings } from "./chutesModelEligibility.js";
 import { readTokenizerJsonPath } from "./tokenizerRuntimeEnv.js";
 import { loadTokenizerRuntimeFromJsonPath } from "./tokenizerRuntime.js";
@@ -55,11 +56,11 @@ export function worstCaseHandleCeilings(input: {
     const body = buildChutesRequestBody(
       buildChatMessages(input.question, fitted.sent, input.referenceDate, "desearch"),
       input.modelId,
-      outputCeiling,
+      chutesRequestMaxTokens(outputCeiling),
       aliases,
     );
-    const estimate = estimateRequestBudget(body, input.env, undefined, runtime);
-    inputTokensUpper = Math.max(inputTokensUpper, estimate.inputTokensUpper);
+    const counted = countRequestInputTokens(body, input.env, runtime);
+    inputTokensUpper = Math.max(inputTokensUpper, counted.inputTokensUpper);
     outputTokensUpper = Math.max(outputTokensUpper, outputCeiling);
   }
   return { inputTokensUpper, outputTokensUpper };

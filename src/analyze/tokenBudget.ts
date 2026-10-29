@@ -1,9 +1,7 @@
 import {
   LLM_FRAMING_TOKENS_PER_MESSAGE,
-  LLM_THINKING_ALLOWANCE_TOKENS,
   LLM_TOKENIZER_CALIBRATION_FIXED,
   LLM_TOKENIZER_CALIBRATION_RATIO,
-  loadLlmRuntimeConfig,
   priceTokenCeiling,
   type ChutesModelPricing,
 } from "../config/llmSettings.js";
@@ -29,14 +27,6 @@ export interface InputTokenBreakdown {
 export function calibrationMarginTokens(messageTokens: number): number {
   const scaled = Math.ceil(messageTokens * LLM_TOKENIZER_CALIBRATION_RATIO);
   return Math.max(LLM_TOKENIZER_CALIBRATION_FIXED, scaled);
-}
-
-function resolvePricing(
-  env: NodeJS.ProcessEnv,
-  pricingOverride: ChutesModelPricing | undefined,
-): ChutesModelPricing {
-  if (pricingOverride !== undefined) return pricingOverride;
-  return loadLlmRuntimeConfig(env).modelPricing;
 }
 
 function resolveRuntime(env: NodeJS.ProcessEnv, runtimeOverride?: TokenizerRuntime): TokenizerRuntime {
@@ -69,15 +59,11 @@ export function countRequestInputTokens(
 export function estimateRequestBudgetFromTokenizer(
   body: ChutesRequestBody,
   env: NodeJS.ProcessEnv,
-  pricingOverride?: ChutesModelPricing,
+  pricing: ChutesModelPricing | undefined,
   runtimeOverride?: TokenizerRuntime,
 ): BudgetEstimate {
   const input = countRequestInputTokens(body, env, runtimeOverride);
-  const priced = priceTokenCeiling(
-    input.inputTokensUpper,
-    body.max_tokens + LLM_THINKING_ALLOWANCE_TOKENS,
-    resolvePricing(env, pricingOverride),
-  );
+  const priced = priceTokenCeiling(input.inputTokensUpper, body.max_tokens, pricing);
   return {
     ...priced,
     basis: "hf-tokenizer-conservative",

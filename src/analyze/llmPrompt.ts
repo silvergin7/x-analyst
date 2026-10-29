@@ -217,8 +217,8 @@ export function buildChutesRequestBody(
 export function estimateRequestBudget(
   body: ChutesRequestBody,
   env: NodeJS.ProcessEnv,
-  pricingOverride?: ChutesModelPricing,
+  pricing: ChutesModelPricing | undefined,
   runtimeOverride?: TokenizerRuntime,
 ): BudgetEstimate {
-  return estimateRequestBudgetFromTokenizer(body, env, pricingOverride, runtimeOverride);
+  return estimateRequestBudgetFromTokenizer(body, env, pricing, runtimeOverride);
 }

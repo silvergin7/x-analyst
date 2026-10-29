@@ -1,4 +1,5 @@
 import {
+  ChutesPricingError,
   LLM_CALL_BUDGET_USD,
   LLM_CONTEXT_SAFETY_MARGIN_TOKENS,
   LLM_REQUEST_TIMEOUT_MS,
@@ -9,6 +10,7 @@ import {
 import type { LlmRunSpendLedger } from "./llmRunSpendLedger.js";
 import type { TokenizerRuntime } from "./tokenizerRuntime.js";
 import type { BudgetEstimate, ChutesModelAttempt, ProviderTokenUsage } from "../types.js";
+import { Agent, fetch as undiciFetch } from "undici";
 import { stripLeadingEmptyThinkingBlock } from "./modelCompletionText.js";
 import {
   buildChutesRequestBody,
@@ -32,6 +34,7 @@ export class LlmCallError extends Error {
   readonly estimate?: BudgetEstimate;
   providerUsage: ProviderTokenUsage | null = null;
   httpStatus?: number;
+  durationMs?: number;
   llmModelAttempts?: ChutesModelAttempt[];
 
   constructor(code: LlmFailureCode, message: string, estimate?: BudgetEstimate) {
@@ -46,6 +49,7 @@ export interface ChutesTransportRequest {
   headers: Record<string, string>;
   body: string;
   signal: AbortSignal;
+  timeoutMs: number;
 }
 
 export interface ChutesTransportResponse {
@@ -62,24 +66,45 @@ export interface ChutesCompletion {
   estimate: BudgetEstimate;
   providerUsage: ProviderTokenUsage | null;
   requestBody: ChutesRequestBody;
+  durationMs: number;
 }
 
-/** Node fetch transport. One attempt; the caller does not retry. */
+/** undici fetch transport. One attempt; the caller does not retry. */
 export function createFetchChutesTransport(): ChutesTransport {
   return {
     async post(url, request) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: request.headers,
-        body: request.body,
-        signal: request.signal,
+      const agent = new Agent({
+        headersTimeout: request.timeoutMs,
+        bodyTimeout: request.timeoutMs,
       });
-      return { status: response.status, bodyText: await response.text() };
+      try {
+        const response = await undiciFetch(url, {
+          method: "POST",
+          headers: request.headers,
+          body: request.body,
+          signal: request.signal,
+          dispatcher: agent,
+        });
+        return { status: response.status, bodyText: await response.text() };
+      } finally {
+        await agent.close();
+      }
     },
   };
 }
 
+const UNDICI_TIMEOUT_CODES = new Set(["UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]);
+
+function hasUndiciTimeoutCode(err: unknown, seen: Set<object>): boolean {
+  if (err === null || typeof err !== "object" || seen.has(err)) return false;
+  seen.add(err);
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "string" && UNDICI_TIMEOUT_CODES.has(code)) return true;
+  return hasUndiciTimeoutCode((err as { cause?: unknown }).cause, seen);
+}
+
 function isTimeoutError(err: unknown): boolean {
+  if (hasUndiciTimeoutCode(err, new Set())) return true;
   return (
     err instanceof Error &&
     (err.name === "TimeoutError" || err.name === "AbortError")
@@ -197,6 +222,7 @@ export async function requestChutesCompletion(
   onEstimate?: (estimate: BudgetEstimate) => void,
   runLedger?: LlmRunSpendLedger,
   tokenizerRuntime?: TokenizerRuntime,
+  timeoutMs: number = LLM_REQUEST_TIMEOUT_MS,
 ): Promise<ChutesCompletion> {
   if (!config.eligible) {
     throw new LlmCallError(
@@ -206,7 +232,15 @@ export async function requestChutesCompletion(
   }
 
   const requestBody = buildChutesRequestBody(messages, config.model, maxTokens, aliases);
-  const estimate = estimateRequestBudget(requestBody, env, undefined, tokenizerRuntime);
+  let estimate: BudgetEstimate;
+  try {
+    estimate = estimateRequestBudget(requestBody, env, config.modelPricing, tokenizerRuntime);
+  } catch (err) {
+    if (err instanceof ChutesPricingError) {
+      throw new LlmCallError("gate", err.message);
+    }
+    throw err;
+  }
   if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {
     throw new LlmCallError(
       "budget",
@@ -238,23 +272,22 @@ export async function requestChutesCompletion(
 
   onEstimate?.(estimate);
   runLedger?.recordCommittedEstimate(estimate.estimatedUsd);
-  const signal = AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS);
+  const started = Date.now();
   let response: ChutesTransportResponse;
   try {
-    response = await transport.post(config.chatCompletionsUrl, {
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-      signal,
-    });
+    response = await postChutes(transport, config.chatCompletionsUrl, requestBody, config.apiKey, timeoutMs);
   } catch (err) {
+    const durationMs = Date.now() - started;
     if (isTimeoutError(err)) {
-      throw new LlmCallError("timeout", "Chutes request timed out", estimate);
+      const error = new LlmCallError("timeout", "Chutes request timed out", estimate);
+      error.durationMs = durationMs;
+      throw error;
     }
-    throw new LlmCallError("http", "Chutes request failed before a response", estimate);
+    const error = new LlmCallError("http", "Chutes request failed before a response", estimate);
+    error.durationMs = durationMs;
+    throw error;
   }
+  const durationMs = Date.now() - started;
 
   if (response.status !== 200) {
     const error = new LlmCallError(
@@ -263,6 +296,7 @@ export async function requestChutesCompletion(
       estimate,
     );
     error.httpStatus = response.status;
+    error.durationMs = durationMs;
     throw error;
   }
 
@@ -270,9 +304,47 @@ export async function requestChutesCompletion(
   try {
     parsed = JSON.parse(response.bodyText);
   } catch {
-    throw new LlmCallError("invalid_output", "Chutes returned invalid JSON", estimate);
+    const error = new LlmCallError("invalid_output", "Chutes returned invalid JSON", estimate);
+    error.durationMs = durationMs;
+    throw error;
   }
 
-  const { content, usage } = readCompletionContent(parsed, estimate);
-  return { content, estimate, providerUsage: usage, requestBody };
+  try {
+    const { content, usage } = readCompletionContent(parsed, estimate);
+    return { content, estimate, providerUsage: usage, requestBody, durationMs };
+  } catch (err) {
+    if (err instanceof LlmCallError) err.durationMs = durationMs;
+    throw err;
+  }
+}
+
+function postChutes(
+  transport: ChutesTransport,
+  url: string,
+  requestBody: ChutesRequestBody,
+  apiKey: string,
+  timeoutMs: number,
+): Promise<ChutesTransportResponse> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const postPromise = transport.post(url, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+    signal,
+    timeoutMs,
+  });
+  postPromise.catch(() => undefined);
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error("Chutes request timed out");
+      err.name = "TimeoutError";
+      reject(err);
+    }, timeoutMs);
+  });
+  return Promise.race([postPromise, timeoutPromise]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }

@@ -12,6 +12,7 @@ import { classificationOutputTokenCeiling } from "./analyze/outputBudget.js";
 import { loadFetchLimits, DEFAULT_QUESTION } from "./config.js";
 import {
   LLM_CALL_BUDGET_USD,
+  chutesRequestMaxTokens,
   LLM_MAX_QUESTION_CHARS,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
@@ -149,10 +150,11 @@ export async function runLlmFixtureCheck(input: FixtureCheckInput): Promise<numb
       buildChutesRequestBody(
         buildChatMessages(input.question, plan.sent, referenceDate),
         config.model,
-        classificationOutputTokenCeiling(plan.sent.length, input.env),
+        chutesRequestMaxTokens(classificationOutputTokenCeiling(plan.sent.length, input.env)),
         postAliases(plan.sent).map((item) => item.alias),
       ),
       input.env,
+      config.modelPricing,
     );
     input.write(`${formatBudgetEstimate(estimate)}\n`);
     if (estimate.estimatedUsd > LLM_CALL_BUDGET_USD) {

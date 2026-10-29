@@ -8,6 +8,7 @@ import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.j
 import { formatBudgetEstimate, formatProviderUsage } from "./llmFixtureReport.js";
 import type {
   AnalysisProviderLabel,
+  ChutesModelAttempt,
   DesearchBilling,
   FetchOutcome,
   PersonOutlookReport,
@@ -29,6 +30,12 @@ const INCOMPLETE_REASON_LABEL: Record<string, string> = {
   desearch_retrieval_interrupted:
     "Desearch retrieval stopped after a failed request; outlook uses partial posts only",
 };
+
+function formatModelAttempt(item: ChutesModelAttempt): string {
+  if (item.kind === "skipped") return `${item.modelId} (skipped)`;
+  if (item.durationMs !== undefined) return `${item.modelId} (${item.durationMs} ms)`;
+  return item.modelId;
+}
 
 function formatSkipCounts(skipped: Record<string, number>): string {
   return Object.entries(skipped)
@@ -171,10 +178,7 @@ export function formatPersonReport(report: PersonOutlookReport): string {
     }
   }
   if (report.llmModelAttempts !== undefined && report.llmModelAttempts.length > 0) {
-    const parts = report.llmModelAttempts.map((item) =>
-      item.kind === "skipped" ? `${item.modelId} (skipped)` : item.modelId,
-    );
-    lines.push(`  Chutes models: ${parts.join(", ")}`);
+    lines.push(`  Chutes models: ${report.llmModelAttempts.map(formatModelAttempt).join(", ")}`);
   }
   if (report.fetchStopReason) {
     lines.push(`  Fetch stopped: ${FETCH_STOP_LABEL[report.fetchStopReason]}`);
@@ -342,9 +346,7 @@ export function formatFullReport(
     for (const failure of handleFailures) {
       parts.push(`@${failure.handle}: ${failure.message}`);
       if (failure.llmModelAttempts !== undefined && failure.llmModelAttempts.length > 0) {
-        const models = failure.llmModelAttempts.map((item) =>
-          item.kind === "skipped" ? `${item.modelId} (skipped)` : item.modelId,
-        );
+        const models = failure.llmModelAttempts.map(formatModelAttempt);
         parts.push(`  Chutes models: ${models.join(", ")}`);
       }
       if (failure.budgetEstimate) parts.push(formatBudgetEstimate(failure.budgetEstimate));

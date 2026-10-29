@@ -46,7 +46,7 @@ export const LLM_MAX_POST_CHARS = 1000;
 export const LLM_MAX_QUOTE_CONTEXT_CHARS = 500;
 export const LLM_MAX_QUESTION_CHARS = 500;
 export const LLM_MAX_EXPLANATION_CHARS = 1500;
-export const LLM_REQUEST_TIMEOUT_MS = 120_000;
+export const LLM_REQUEST_TIMEOUT_MS = 900_000;
 
 export const CHUTES_CATALOG_TIMEOUT_MS = 10_000;
 
@@ -260,29 +260,47 @@ export function llmRuntimeConfigForChutesPlan(
   };
 }
 
-/** Completion footprint including the thinking allowance reserved in budgets. */
-export function completionTokensContextFootprint(maxTokens: number): number {
-  return maxTokens + LLM_THINKING_ALLOWANCE_TOKENS;
+/** Tokens sent as `max_tokens`: the JSON output ceiling plus the thinking allowance. */
+export function chutesRequestMaxTokens(outputCeiling: number): number {
+  return outputCeiling + LLM_THINKING_ALLOWANCE_TOKENS;
 }
 
-/** True when the input ceiling plus max_tokens fits in the context window minus the safety margin. */
+/** True when the input ceiling plus the sent `max_tokens` fits in the context window minus the safety margin. */
 export function fitsModelContextWindow(
   contextLengthTokens: number,
   inputTokensUpper: number,
   maxTokens: number,
 ): boolean {
   return (
-    inputTokensUpper + completionTokensContextFootprint(maxTokens) <=
+    inputTokensUpper + maxTokens <=
     contextLengthTokens - LLM_CONTEXT_SAFETY_MARGIN_TOKENS
   );
+}
+
+export class ChutesPricingError extends Error {
+  constructor() {
+    super("Chutes model pricing is missing or not a positive finite number");
+    this.name = "ChutesPricingError";
+  }
+}
+
+function positiveFinitePrice(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 /** Pessimistic USD ceiling from token counts and catalog pricing. */
 export function priceTokenCeiling(
   inputTokensUpper: number,
   outputTokensUpper: number,
-  pricing: ChutesModelPricing,
+  pricing: ChutesModelPricing | undefined,
 ): Pick<BudgetEstimate, "estimatedUsd" | "inputTokensUpper" | "outputTokensUpper"> {
+  if (
+    pricing === undefined ||
+    !positiveFinitePrice(pricing.promptUsdPerMillion) ||
+    !positiveFinitePrice(pricing.completionUsdPerMillion)
+  ) {
+    throw new ChutesPricingError();
+  }
   const estimatedUsd =
     (inputTokensUpper * pricing.promptUsdPerMillion) / 1_000_000 +
     (outputTokensUpper * pricing.completionUsdPerMillion) / 1_000_000;

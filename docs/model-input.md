@@ -26,7 +26,7 @@ Eligible post text is packed newest-first up to **20,000** characters total (`LL
 
 ## Context window and drop-oldest
 
-The coded context window is **40,960** tokens (`LLM_CONTEXT_WINDOW_TOKENS`). The app requires input ceiling plus `max_tokens` to fit in **window − 1,024** (`LLM_CONTEXT_SAFETY_MARGIN_TOKENS`).
+The context window is the selected model's catalog context length. The sent `max_tokens` is the JSON output ceiling plus the 16,000 thinking tokens, and the context fit uses that total once. The app requires the input ceiling plus that `max_tokens` to fit in **window − 1,024** (`LLM_CONTEXT_SAFETY_MARGIN_TOKENS`).
 
 If the request is still too large, the oldest eligible posts are dropped and listed as `beyond_context_window` (`src/analyze/fitContextWindow.ts`). That happens before the HTTP call.
 
