@@ -50,6 +50,7 @@ Committed template: `.env.example`. Placeholders only; never commit real keys.
 | `CHUTES_API_KEY` | Bearer token for Chutes. |
 | `LLM_MODEL` | Must be `Qwen/Qwen3-32B-TEE` for the coded rate table. |
 | `LLM_INPUT_MAX_CHARS` | Character budget for post text sent to the model (default 20,000). |
+| Chutes request timeout | Coded as `LLM_REQUEST_TIMEOUT_MS` (120 seconds) in `src/config/llmSettings.ts`; one attempt, no retry. |
 | `ANALYST_LIST_PATH` | JSON roster when `--handles` is omitted on analyze. |
 | `LLM_TOKENIZER_DIR` | Optional override directory for pinned tokenizer files. |
 | `DESEARCH_API_BASE` | Optional Desearch API base URL (default `https://api.desearch.ai`). Preflight prints **scheme, host, and port only**. A non-default origin prints a warning that your API key will be sent there. Overrides must be `http` or `https` with no userinfo, query, or fragment. Non-default origins must use **https** unless the hostname is exactly `localhost` or `127.0.0.1`. |

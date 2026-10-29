@@ -52,7 +52,7 @@ export const LLM_MAX_POST_CHARS = 1000;
 export const LLM_MAX_QUOTE_CONTEXT_CHARS = 500;
 export const LLM_MAX_QUESTION_CHARS = 500;
 export const LLM_MAX_EXPLANATION_CHARS = 1500;
-export const LLM_REQUEST_TIMEOUT_MS = 30_000;
+export const LLM_REQUEST_TIMEOUT_MS = 120_000;
 
 /**
  * Extra input-token allowance per chat message for template special tokens
