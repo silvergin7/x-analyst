@@ -79,7 +79,7 @@ interface OutlookReport {
   modelInvoked?: boolean;
   llmModel?: string;
   llmModelsTried?: string[];
-  llmModelAttempts?: Array<{ modelId: string; kind: "sent" | "skipped" }>;
+  llmModelAttempts?: Array<{ modelId: string; kind: "sent" | "skipped"; durationMs?: number }>;
   tokenizerPin?: { root: string; commit: string; sha256: string };
   eligiblePostCount?: number;
   relevantPostCount?: number;
@@ -345,6 +345,29 @@ function readAssetOutlooks(value: unknown): OutlookReport["assetOutlooks"] | nul
   return outlooks;
 }
 
+function readModelAttempts(
+  value: unknown,
+): Array<{ modelId: string; kind: "sent" | "skipped"; durationMs?: number }> | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  const attempts: Array<{ modelId: string; kind: "sent" | "skipped"; durationMs?: number }> = [];
+  for (const item of value) {
+    if (item === null || typeof item !== "object") return null;
+    const record = item as { modelId?: unknown; kind?: unknown; durationMs?: unknown };
+    if (!isNonEmptyString(record.modelId)) return null;
+    if (record.kind !== "sent" && record.kind !== "skipped") return null;
+    if (record.durationMs === undefined) {
+      attempts.push({ modelId: record.modelId, kind: record.kind });
+      continue;
+    }
+    if (typeof record.durationMs !== "number" || !Number.isFinite(record.durationMs) || record.durationMs < 0) {
+      return null;
+    }
+    attempts.push({ modelId: record.modelId, kind: record.kind, durationMs: record.durationMs });
+  }
+  return attempts;
+}
+
 function readReport(value: unknown): OutlookReport | null {
   if (!isRecord(value) || !isNonEmptyString(value.handle)) return null;
   if (typeof value.outlook !== "string" || !OUTLOOKS.has(value.outlook)) return null;
@@ -394,6 +417,8 @@ function readReport(value: unknown): OutlookReport | null {
   if (value.postsWithMedia !== undefined && !isCount(value.postsWithMedia)) return null;
   const classifications = readClassifications(value.classifications);
   if (classifications === null) return null;
+  const llmModelAttempts = readModelAttempts(value.llmModelAttempts);
+  if (llmModelAttempts === null) return null;
   return {
     handle: value.handle,
     outlook: value.outlook,
@@ -411,22 +436,7 @@ function readReport(value: unknown): OutlookReport | null {
     value.llmModelsTried.every((item) => typeof item === "string")
       ? { llmModelsTried: value.llmModelsTried as string[] }
       : {}),
-    ...(Array.isArray(value.llmModelAttempts) &&
-    value.llmModelAttempts.every(
-      (item) =>
-        item !== null &&
-        typeof item === "object" &&
-        isNonEmptyString((item as { modelId?: string }).modelId) &&
-        ((item as { kind?: string }).kind === "sent" ||
-          (item as { kind?: string }).kind === "skipped"),
-    )
-      ? {
-          llmModelAttempts: value.llmModelAttempts as Array<{
-            modelId: string;
-            kind: "sent" | "skipped";
-          }>,
-        }
-      : {}),
+    ...(llmModelAttempts !== undefined ? { llmModelAttempts } : {}),
     ...(value.tokenizerPin &&
     typeof value.tokenizerPin === "object" &&
     isNonEmptyString((value.tokenizerPin as { root?: string }).root) &&
@@ -865,7 +875,13 @@ function ReportCard({
         <p>
           Chutes models:{" "}
           {report.llmModelAttempts
-            .map((item) => (item.kind === "skipped" ? `${item.modelId} (skipped)` : item.modelId))
+            .map((item) =>
+              item.kind === "skipped"
+                ? `${item.modelId} (skipped)`
+                : item.durationMs !== undefined
+                  ? `${item.modelId} (${item.durationMs} ms)`
+                  : item.modelId,
+            )
             .join(", ")}
         </p>
       )}

@@ -431,6 +431,42 @@ describe("LlmOutlookAnalyzer", () => {
     assert.equal(report.outlook, "unclear");
   });
 
+  it("ends a call that never answers with the timeout error", async () => {
+    let posts = 0;
+    const transport: ChutesTransport = {
+      async post() {
+        posts += 1;
+        return new Promise(() => undefined);
+      },
+    };
+    const started = Date.now();
+    await assert.rejects(
+      () =>
+        requestChutesCompletion(
+          liveConfig(),
+          [{ role: "user", content: "hi" }],
+          transport,
+          process.env,
+          800,
+          ["p1"],
+          undefined,
+          undefined,
+          undefined,
+          40,
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof LlmCallError);
+        assert.equal(err.code, "timeout");
+        assert.equal(err.message, "Chutes request timed out");
+        assert.equal(Number.isFinite(err.durationMs), true);
+        assert.ok((err.durationMs ?? 0) < 5_000);
+        return true;
+      },
+    );
+    assert.equal(posts, 1);
+    assert.ok(Date.now() - started < 5_000);
+  });
+
   it("stops before any post when Chutes pricing is missing", async () => {
     const missing = {
       promptUsdPerMillion: undefined,

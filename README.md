@@ -27,13 +27,14 @@ Desearch (Bittensor Subnet 22) and Chutes (Bittensor Subnet 64) are the live dat
 | Post text sent to the model | 20,000 characters | `src/config/llmSettings.ts` (`LLM_INPUT_MAX_CHARS`) |
 | Context safety margin | 1,024 tokens | `src/config/llmSettings.ts` (`LLM_CONTEXT_SAFETY_MARGIN_TOKENS`) |
 | Thinking allowance in budgets | 16,000 tokens | `src/config/llmSettings.ts` (`LLM_THINKING_ALLOWANCE_TOKENS`) |
+| Chutes request timeout | 15 minutes, one attempt, no retry | `src/config/llmSettings.ts` (`LLM_REQUEST_TIMEOUT_MS`) |
 | Chutes model | Automatic from catalog | [docs/chutes-model-selection.md](docs/chutes-model-selection.md) |
 
 Token counting, margins, and drop-oldest behavior: [docs/model-input.md](docs/model-input.md). Desearch request shape and preflight math: [docs/reference.md](docs/reference.md). Model ranking and fallbacks: [docs/chutes-model-selection.md](docs/chutes-model-selection.md).
 
 ## Try it offline first
 
-1. Install Node.js 20.12 or newer, then run `npm install`.
+1. Install Node.js 22.19 or newer, then run `npm install`.
 2. Run `npm run analyze -- --offline --handles bullmacro`.
 3. When you see `Proceed? [y/N]`, type `y` (or add `--yes` to skip the prompt).
 4. Read the printed report. Fixture handle `bullmacro` returns a mock bullish outlook with evidence links under `fixture.x-analyst.local`.

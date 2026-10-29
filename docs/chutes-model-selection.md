@@ -25,7 +25,8 @@ Each candidate must satisfy all of:
 ## During the run
 
 - Thinking is enabled on each Chutes request (`chat_template_kwargs.enable_thinking`).
-- Before each HTTP call the app checks the **$0.20** per-call and **$1.00** run worst-case ledger (add-only; 404/503 attempts still commit).
+- Before each HTTP call the app checks the **$0.20** per-call and **$1.00** run worst-case ledger (add-only; 404/503 attempts still commit). The rates are the selected catalog model's prices. A missing, zero, negative, or non-finite price stops the call before the request is sent.
+- Each request waits up to **15 minutes**. A timeout is not retried and does not select a fallback model. The report records `durationMs` on each sent attempt. A timeout can still be billed by Chutes and then has no provider usage in the report.
 - On HTTP 404 or 503 the app may try up to **two** fallback models that were ranked at preflight. Each fallback reloads the tokenizer, refits the context window, and re-checks both dollar limits. Models that do not fit are skipped and do not count toward the two attempts.
 
 ## Overrides

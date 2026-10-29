@@ -65,6 +65,46 @@ describe("requestChutesCompletionWithFallbacks", () => {
   beforeEach(() => installByteQuarterMockTokenizer());
   afterEach(() => clearMockTokenizer());
 
+  it("does not fall back when a Chutes call times out", async () => {
+    const env = withTestChutesModelEnv({
+      ANALYSIS_PROVIDER: "chutes",
+      LLM_LIVE_ENABLED: "true",
+      CHUTES_API_KEY: "test-key",
+    });
+    const plan = planWith(["A-TEE", "B-TEE"]);
+    let posts = 0;
+    let prepareCalls = 0;
+    await assert.rejects(
+      () =>
+        requestChutesCompletionWithFallbacks({
+          primaryConfig: prepared("A-TEE", env).config,
+          plan,
+          initialAttempt: prepared("A-TEE", env),
+          prepareFallback: async () => {
+            prepareCalls += 1;
+            return prepared("B-TEE", env);
+          },
+          transport: {
+            async post() {
+              posts += 1;
+              return new Promise(() => undefined);
+            },
+          },
+          env,
+          timeoutMs: 40,
+        }),
+      (err: unknown) =>
+        err instanceof LlmCallError &&
+        err.code === "timeout" &&
+        err.message === "Chutes request timed out" &&
+        err.llmModelAttempts?.length === 1 &&
+        err.llmModelAttempts[0]?.modelId === "A-TEE" &&
+        Number.isFinite(err.llmModelAttempts[0]?.durationMs),
+    );
+    assert.equal(posts, 1);
+    assert.equal(prepareCalls, 0);
+  });
+
   it("ends with the original 404 when every fallback is skipped", async () => {
     const env = withTestChutesModelEnv({
       ANALYSIS_PROVIDER: "chutes",
@@ -100,11 +140,17 @@ describe("requestChutesCompletionWithFallbacks", () => {
       (err: unknown) => {
         assert.ok(err instanceof LlmCallError);
         assert.equal(err.httpStatus, 404);
-        assert.deepEqual(err.llmModelAttempts, [
-          { modelId: "A-TEE", kind: "sent" },
-          { modelId: "B-TEE", kind: "skipped" },
-          { modelId: "C-TEE", kind: "skipped" },
-        ]);
+        assert.deepEqual(
+          err.llmModelAttempts?.map((item) => ({ modelId: item.modelId, kind: item.kind })),
+          [
+            { modelId: "A-TEE", kind: "sent" },
+            { modelId: "B-TEE", kind: "skipped" },
+            { modelId: "C-TEE", kind: "skipped" },
+          ],
+        );
+        assert.equal(Number.isFinite(err.llmModelAttempts?.[0]?.durationMs), true);
+        assert.equal(err.llmModelAttempts?.[1]?.durationMs, undefined);
+        assert.equal(err.llmModelAttempts?.[2]?.durationMs, undefined);
         return true;
       },
     );
@@ -183,11 +229,17 @@ describe("requestChutesCompletionWithFallbacks", () => {
     });
     assert.deepEqual(posts, ["A-TEE", "C-TEE"]);
     assert.equal(result.modelId, "C-TEE");
-    assert.deepEqual(result.modelAttempts, [
-      { modelId: "A-TEE", kind: "sent" },
-      { modelId: "B-TEE", kind: "skipped" },
-      { modelId: "C-TEE", kind: "sent" },
-    ]);
+    assert.deepEqual(
+      result.modelAttempts.map((item) => ({ modelId: item.modelId, kind: item.kind })),
+      [
+        { modelId: "A-TEE", kind: "sent" },
+        { modelId: "B-TEE", kind: "skipped" },
+        { modelId: "C-TEE", kind: "sent" },
+      ],
+    );
+    assert.equal(Number.isFinite(result.modelAttempts[0]?.durationMs), true);
+    assert.equal(result.modelAttempts[1]?.durationMs, undefined);
+    assert.equal(Number.isFinite(result.modelAttempts[2]?.durationMs), true);
   });
 
   it("mutation: fallbackCandidates must exclude skipped models", () => {

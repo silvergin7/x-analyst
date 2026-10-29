@@ -289,6 +289,34 @@ describe("runReport live gates", () => {
     }
   });
 
+  it("records elapsed time on a sent Chutes attempt", async () => {
+    const posts = desearchTransport([tweet("live-1", false)]);
+    const model = chutesTransport(
+      classified("bullish", "The supplied original says growth remains constructive.", ["p1"]),
+    );
+    const result = await runReport(["bullmacro"], question, {
+      chutesModelPlan: testChutesModelPlan(),
+      referenceDate: "2026-11-02",
+      env: desearchEnv(),
+      cache: createFetchSliceCache(),
+      desearchTransport: posts.transport,
+      chutesTransport: model.transport,
+    });
+    const attempt = result.reports[0]?.llmModelAttempts?.[0];
+    assert.equal(attempt?.kind, "sent");
+    assert.equal(Number.isFinite(attempt?.durationMs), true);
+    assert.ok((attempt?.durationMs ?? -1) >= 0);
+    const text = formatFullReport(question.text, [], result.reports, {
+      postsSource: result.postsSource,
+      analysisSource: result.analysisSource,
+      referenceDate: result.referenceDate,
+      fetchedAt: result.fetchedAt,
+      reused: result.reused,
+      billing: result.billing,
+    });
+    assert.match(text, /Chutes models: .* \(\d+ ms\)/);
+  });
+
   it("sends retrieved posts to Chutes with the invocation date and no fixture wording", async () => {
     const posts = desearchTransport(
       [tweet("quote-1", true), tweet("live-1", false)],

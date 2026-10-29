@@ -64,6 +64,7 @@ export async function requestChutesCompletionWithFallbacks(input: {
   env: NodeJS.ProcessEnv;
   onEstimate?: (estimate: BudgetEstimate) => void;
   runLedger?: LlmRunSpendLedger;
+  timeoutMs?: number;
 }): Promise<ChutesFallbackCompletion> {
   const modelsTried: string[] = [];
   const modelsSkipped: string[] = [];
@@ -86,19 +87,33 @@ export async function requestChutesCompletionWithFallbacks(input: {
     modelAttempts.push({ modelId, kind: "skipped" });
   };
 
+  function stampDuration(durationMs: number | undefined): void {
+    if (durationMs === undefined) return;
+    const last = modelAttempts[modelAttempts.length - 1];
+    if (last !== undefined && last.kind === "sent") last.durationMs = durationMs;
+  }
+
   async function sendAttempt(attempt: PreparedChutesAttempt): Promise<ChutesCompletion> {
     recordSent(attempt.config.model);
-    return requestChutesCompletion(
-      attempt.config,
-      attempt.messages,
-      input.transport,
-      input.env,
-      attempt.maxTokens,
-      attempt.aliases,
-      input.onEstimate,
-      input.runLedger,
-      attempt.tokenizerRuntime,
-    );
+    try {
+      const completion = await requestChutesCompletion(
+        attempt.config,
+        attempt.messages,
+        input.transport,
+        input.env,
+        attempt.maxTokens,
+        attempt.aliases,
+        input.onEstimate,
+        input.runLedger,
+        attempt.tokenizerRuntime,
+        input.timeoutMs,
+      );
+      stampDuration(completion.durationMs);
+      return completion;
+    } catch (err) {
+      if (err instanceof LlmCallError) stampDuration(err.durationMs);
+      throw err;
+    }
   }
 
   async function refreshAfterHttp404(refreshedForResponse: { done: boolean }): Promise<void> {

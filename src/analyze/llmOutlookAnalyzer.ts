@@ -345,24 +345,30 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
             onEstimate: this.onEstimate,
             runLedger: this.runLedger,
           })
-        : {
-            completion: await requestChutesCompletion(
-              activeConfig,
-              messages,
-              this.transport,
-              this.runEnv,
-              maxTokens,
-              aliasIds,
-              this.onEstimate,
-              this.runLedger,
-              runtime,
-            ),
+        : await requestChutesCompletion(
+            activeConfig,
+            messages,
+            this.transport,
+            this.runEnv,
+            maxTokens,
+            aliasIds,
+            this.onEstimate,
+            this.runLedger,
+            runtime,
+          ).then((completion) => ({
+            completion,
             modelId: activeConfig.model,
             modelsTried: [activeConfig.model],
-            modelAttempts: [{ modelId: activeConfig.model, kind: "sent" as const }],
+            modelAttempts: [
+              {
+                modelId: activeConfig.model,
+                kind: "sent" as const,
+                durationMs: completion.durationMs,
+              },
+            ],
             tokenizerPin: initialAttempt.tokenizerPin,
             tokenizerJsonPath: initialAttempt.tokenizerJsonPath,
-          };
+          }));
     const completion = callResult.completion;
     if (callResult.tokenizerPin !== undefined && callResult.tokenizerJsonPath !== undefined) {
       this.commitSuccessfulModel(
