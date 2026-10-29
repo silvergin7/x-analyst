@@ -22,6 +22,14 @@ describe("GET /api/meta", () => {
 });
 
 describe("GET /api/reports", () => {
+  it("returns 400 for a malformed report path", async () => {
+    const malformed = await dispatchApiForTest({
+      method: "GET",
+      pathname: "/api/reports/bad%",
+    });
+    assert.equal(malformed.statusCode, 400);
+  });
+
   it("rejects unsafe report ids", async () => {
     const traversal = await dispatchApiForTest({
       method: "GET",
