@@ -17,6 +17,7 @@ import {
   loadInputMaxChars,
   loadLlmRuntimeConfig,
   parseAnalysisReferenceDate,
+  readInputMaxCharsStrict,
 } from "./config/llmSettings.js";
 import { lookbackCutoffMs } from "./config/timeWindow.js";
 import { loadPostsProviderConfig } from "./config/postsProvider.js";
@@ -196,6 +197,11 @@ export async function runReport(
   }
   if (problems.length > 0) {
     throw new ReportConfigError(`${problems.join(" ")} No request was sent.`);
+  }
+
+  const inputMaxCharsStrict = readInputMaxCharsStrict(env);
+  if (!inputMaxCharsStrict.ok) {
+    throw new ReportConfigError(`${inputMaxCharsStrict.message}. No request was sent.`);
   }
 
   let postsSource: PostSource =
