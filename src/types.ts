@@ -212,6 +212,12 @@ export interface PersonOutlookReport {
   invalidPostsSkipped?: Record<string, number>;
   /** Retrieved posts whose documented media array was non-empty. */
   postsWithMedia?: number;
+  /** Model explanation was cut to the configured character limit. */
+  explanationTruncated?: boolean;
+  /** Evidence citations dropped because the post was unclassified or invalid. */
+  evidenceDroppedUnclassified?: number;
+  /** Asset-class outlooks removed after citation checks. */
+  assetOutlooksDropped?: Exclude<AssetClass, "none">[];
 }
 
 /** One retrieved post as included, truncated, or left out of model input. */

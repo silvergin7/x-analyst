@@ -185,6 +185,13 @@ export class LlmOutlookAnalyzer implements OutlookAnalyzer {
         evidence: checked.evidence,
         classifications: checked.classifications,
         assetOutlooks: checked.assetOutlooks,
+        ...(checked.explanationTruncated ? { explanationTruncated: true } : {}),
+        ...(checked.evidenceDroppedUnclassified !== undefined
+          ? { evidenceDroppedUnclassified: checked.evidenceDroppedUnclassified }
+          : {}),
+        ...(checked.assetOutlooksDropped !== undefined
+          ? { assetOutlooksDropped: checked.assetOutlooksDropped }
+          : {}),
         modelInvoked: true,
         providerUsage: completion.providerUsage,
         budgetEstimate: completion.estimate,

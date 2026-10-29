@@ -1,4 +1,7 @@
-import { UNCLASSIFIED_BY_MODEL_REASON } from "../analyze/classification.js";
+import {
+  CLASSIFICATION_INVALID_REASON,
+  UNCLASSIFIED_BY_MODEL_REASON,
+} from "../analyze/classification.js";
 import { desearchListPriceUsd } from "../config/desearchSettings.js";
 import { FETCH_STOP_LABEL, STALE_RELEVANT_POST_DAYS } from "../config/timeWindow.js";
 import type { HandleAnalysisFailure, ReportFailureDetails } from "../runReport.js";
@@ -120,6 +123,23 @@ export function formatPersonReport(report: PersonOutlookReport): string {
     lines.push(
       `  Unclassified by model: ${unclassified.map((item) => item.postId).join(", ")}`,
     );
+  }
+  const invalid = report.classifications?.filter(
+    (item) => item.reason === CLASSIFICATION_INVALID_REASON,
+  ) ?? [];
+  if (invalid.length > 0) {
+    lines.push(`  Classification invalid: ${invalid.map((item) => item.postId).join(", ")}`);
+  }
+  if (report.explanationTruncated) {
+    lines.push("  Explanation was truncated to the configured length limit.");
+  }
+  if (report.evidenceDroppedUnclassified !== undefined && report.evidenceDroppedUnclassified > 0) {
+    lines.push(
+      `  Evidence citations dropped (unclassified or invalid): ${report.evidenceDroppedUnclassified}`,
+    );
+  }
+  if (report.assetOutlooksDropped !== undefined && report.assetOutlooksDropped.length > 0) {
+    lines.push(`  Asset outlooks dropped: ${report.assetOutlooksDropped.join(", ")}`);
   }
   if (report.viewMayBeStale && !report.assetOutlooks?.some((item) => item.viewMayBeStale)) {
     lines.push(
